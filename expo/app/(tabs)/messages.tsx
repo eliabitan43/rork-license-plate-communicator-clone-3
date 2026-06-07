@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   StyleSheet,
   Text,
@@ -6,372 +6,430 @@ import {
   FlatList,
   TouchableOpacity,
   SafeAreaView,
-  RefreshControl,
-  Animated,
+  Platform,
 } from "react-native";
-import { MessageCircle, Send, ChevronRight, Plus, Inbox } from "lucide-react-native";
+import {
+  MessageCircle,
+  Send,
+  Edit,
+  CheckCheck,
+  Check,
+} from "lucide-react-native";
 import { router } from "expo-router";
+import * as Haptics from "expo-haptics";
 import { designTokens } from "@/constants/theme";
 import { useAppStore } from "@/hooks/useAppStore";
 import { Message } from "@/types";
 
-type FilterType = "all" | "received" | "sent";
+type Filter = "all" | "received" | "sent" | "unread";
+
+const TAG_META: Record<string, { label: string; bg: string; color: string }> = {
+  compliment: { label: "Compliment", bg: "#E6FAF5", color: "#0A6E55" },
+  blocking: { label: "Urgent", bg: "#FFF0F0", color: "#B22222" },
+  safety: { label: "Safety", bg: "#FFF0F0", color: "#B22222" },
+  child_pet_alert: { label: "Critical", bg: "#FFF0F0", color: "#B22222" },
+  tow_warning: { label: "Tow alert", bg: "#FFF0F0", color: "#B22222" },
+  hazard: { label: "Hazard", bg: "#FFF7E6", color: "#7A4F00" },
+  parking_alert: { label: "Parking", bg: "#FFF7E6", color: "#7A4F00" },
+  report_driver: { label: "Road alert", bg: "#FFF7E6", color: "#7A4F00" },
+  flat_tire: { label: "Tyre", bg: "#EDF4FF", color: "#154DA8" },
+  lights_on: { label: "Lights on", bg: "#FFF7E6", color: "#7A4F00" },
+  general: { label: "Message", bg: "#EDF4FF", color: "#154DA8" },
+};
+
+function formatTime(ts: string) {
+  const d = new Date(ts);
+  const now = new Date();
+  const diff = (now.getTime() - d.getTime()) / 1000;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 172800) return "Yesterday";
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+interface RowProps {
+  msg: Message;
+  isSent: boolean;
+  isMine: boolean;
+  onPress: () => void;
+}
+
+function MessageRow({ msg, isSent, isMine, onPress }: RowProps) {
+  const isUnread = !msg.isRead && !isSent;
+  const meta = TAG_META[msg.type] ?? TAG_META.general;
+
+  return (
+    <TouchableOpacity
+      style={[styles.row, isUnread && styles.rowUnread, isMine && styles.rowMine]}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      <View
+        style={[
+          styles.rowIcon,
+          isSent ? styles.rowIconSent : styles.rowIconRecv,
+        ]}
+      >
+        {isSent ? (
+          <Send size={15} color={designTokens.color.primary} strokeWidth={2.2} />
+        ) : (
+          <MessageCircle size={15} color="#0A6E55" strokeWidth={2.2} />
+        )}
+      </View>
+
+      <View style={styles.rowBody}>
+        <View style={styles.rowTop}>
+          <View style={styles.plateChip}>
+            <Text style={styles.plateChipText}>
+              {isSent ? msg.toPlate : msg.fromPlate || "Anonymous"}
+            </Text>
+          </View>
+          <View style={[styles.tag, { backgroundColor: meta.bg }]}>
+            <Text style={[styles.tagText, { color: meta.color }]}>
+              {meta.label}
+            </Text>
+          </View>
+          <Text style={styles.rowTime}>{formatTime(msg.timestamp)}</Text>
+        </View>
+
+        <Text
+          style={[styles.rowPreview, isUnread && styles.rowPreviewBold]}
+          numberOfLines={2}
+        >
+          {isSent ? "You: " : ""}
+          {msg.content}
+        </Text>
+
+        {isSent && (
+          <View style={styles.deliveryRow}>
+            {msg.isRead ? (
+              <>
+                <CheckCheck
+                  size={12}
+                  color={designTokens.color.primary}
+                  strokeWidth={2}
+                />
+                <Text
+                  style={[
+                    styles.deliveryText,
+                    { color: designTokens.color.primary },
+                  ]}
+                >
+                  Read
+                </Text>
+              </>
+            ) : (
+              <>
+                <Check
+                  size={12}
+                  color={designTokens.color.textMuted}
+                  strokeWidth={2}
+                />
+                <Text style={styles.deliveryText}>Delivered</Text>
+              </>
+            )}
+          </View>
+        )}
+      </View>
+
+      {isUnread && <View style={styles.unreadDot} />}
+    </TouchableOpacity>
+  );
+}
 
 export default function MessagesScreen() {
-  const { messages, userProfile, primaryVehicle, markMessageAsRead } = useAppStore();
-  const [refreshing, setRefreshing] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<FilterType>("all");
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 400,
-      useNativeDriver: true,
-    }).start();
-  }, [fadeAnim]);
+  const { messages, userProfile, primaryVehicle, markMessageAsRead } =
+    useAppStore();
+  const [filter, setFilter] = useState<Filter>("all");
 
   const userPlates = useMemo(
-    () => userProfile?.vehicles?.map((v) => v.licensePlate) || [],
-    [userProfile?.vehicles]
+    () => userProfile?.vehicles?.map((v) => v.licensePlate) ?? [],
+    [userProfile]
   );
 
-  const sortedMessages = useMemo(() => {
+  const filtered = useMemo(() => {
     const sorted = [...messages].sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      (a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
-    if (activeFilter === "received") {
-      return sorted.filter((m) => !userPlates.includes(m.fromPlate));
-    }
-    if (activeFilter === "sent") {
+    if (filter === "sent")
       return sorted.filter((m) => userPlates.includes(m.fromPlate));
-    }
+    if (filter === "received")
+      return sorted.filter((m) => !userPlates.includes(m.fromPlate));
+    if (filter === "unread")
+      return sorted.filter(
+        (m) => !m.isRead && !userPlates.includes(m.fromPlate)
+      );
     return sorted;
-  }, [messages, activeFilter, userPlates]);
+  }, [messages, filter, userPlates]);
 
-  const handleMessagePress = useCallback(
-    async (message: Message) => {
-      if (!message.isRead && primaryVehicle && message.toPlate === primaryVehicle.licensePlate) {
-        await markMessageAsRead(message.id);
+  const handlePress = useCallback(
+    async (msg: Message) => {
+      Haptics.selectionAsync();
+      if (
+        !msg.isRead &&
+        primaryVehicle &&
+        msg.toPlate === primaryVehicle.licensePlate
+      ) {
+        await markMessageAsRead(msg.id);
       }
       router.push({
         pathname: "/message-detail",
-        params: { messageId: message.id },
+        params: { messageId: msg.id },
       });
     },
     [primaryVehicle, markMessageAsRead]
   );
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 800);
-  }, []);
-
-  const renderMessage = useCallback(
-    ({ item }: { item: Message }) => {
-      const isSent = userPlates.includes(item.fromPlate);
-      const isUnread = !item.isRead && !isSent;
-
-      return (
-        <TouchableOpacity
-          style={styles.messageCard}
-          onPress={() => handleMessagePress(item)}
-          activeOpacity={0.55}
-          testID={`message-${item.id}`}
-        >
-          <View style={[styles.avatarCircle, isSent ? styles.avatarSent : styles.avatarReceived]}>
-            {isSent ? (
-              <Send size={15} color={designTokens.color.primary} strokeWidth={2.2} />
-            ) : (
-              <MessageCircle size={15} color={designTokens.color.success} strokeWidth={2.2} />
-            )}
-          </View>
-
-          <View style={styles.messageBody}>
-            <View style={styles.messageTopRow}>
-              <Text style={[styles.plateName, isUnread && styles.plateNameUnread]} numberOfLines={1}>
-                {isSent ? item.toPlate : item.fromPlate}
-              </Text>
-              <Text style={styles.timeText}>{formatTime(item.timestamp)}</Text>
-            </View>
-            <Text style={[styles.preview, isUnread && styles.previewUnread]} numberOfLines={2}>
-              {isSent ? "You: " : ""}
-              {item.content}
-            </Text>
-          </View>
-
-          <View style={styles.messageRight}>
-            {isUnread && <View style={styles.unreadDot} />}
-            <ChevronRight size={14} color={designTokens.color.textLight} />
-          </View>
-        </TouchableOpacity>
-      );
-    },
-    [userPlates, handleMessagePress]
-  );
-
-  const keyExtractor = useCallback((item: Message) => item.id, []);
+  const FILTERS: { id: Filter; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "received", label: "Received" },
+    { id: "sent", label: "Sent" },
+    { id: "unread", label: "Unread" },
+  ];
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Animated.View style={[styles.header, { opacity: fadeAnim }]}>
-        <Text style={styles.headerTitle}>Messages</Text>
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Messages</Text>
         <TouchableOpacity
-          style={styles.newButton}
-          onPress={() => router.push("/(tabs)/dashboard" as any)}
-          testID="compose-message"
+          style={styles.composeBtn}
+          onPress={() => router.push("/send-message")}
+          accessibilityLabel="Compose new message"
         >
-          <Plus size={18} color="#FFFFFF" strokeWidth={2.5} />
+          <Edit size={16} color={designTokens.color.primary} strokeWidth={2} />
         </TouchableOpacity>
-      </Animated.View>
+      </View>
 
-      <View style={styles.filterRow}>
-        {(["all", "received", "sent"] as FilterType[]).map((filter) => (
+      <View style={styles.filters}>
+        {FILTERS.map((f) => (
           <TouchableOpacity
-            key={filter}
-            style={[styles.filterChip, activeFilter === filter && styles.filterChipActive]}
-            onPress={() => setActiveFilter(filter)}
-            activeOpacity={0.7}
+            key={f.id}
+            style={[styles.filterTab, filter === f.id && styles.filterTabOn]}
+            onPress={() => {
+              Haptics.selectionAsync();
+              setFilter(f.id);
+            }}
           >
             <Text
-              style={[styles.filterText, activeFilter === filter && styles.filterTextActive]}
+              style={[
+                styles.filterText,
+                filter === f.id && styles.filterTextOn,
+              ]}
             >
-              {filter === "all" ? "All" : filter === "received" ? "Received" : "Sent"}
+              {f.label}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
 
       <FlatList
-        data={sortedMessages}
-        renderItem={renderMessage}
-        keyExtractor={keyExtractor}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <View style={styles.emptyIconWrap}>
-              <Inbox size={26} color={designTokens.color.primary} strokeWidth={1.8} />
-            </View>
+        data={filtered}
+        keyExtractor={(m) => m.id}
+        renderItem={({ item }) => {
+          const isSent = userPlates.includes(item.fromPlate);
+          const isMine = userPlates.some(
+            (p) => item.toPlate === p && !isSent
+          );
+          return (
+            <MessageRow
+              msg={item}
+              isSent={isSent}
+              isMine={isMine}
+              onPress={() => handlePress(item)}
+            />
+          );
+        }}
+        ItemSeparatorComponent={() => (
+          <View
+            style={{
+              height: 0.5,
+              backgroundColor: designTokens.color.border,
+              marginLeft: 68,
+            }}
+          />
+        )}
+        ListEmptyComponent={() => (
+          <View style={styles.empty}>
+            <MessageCircle
+              size={36}
+              color={designTokens.color.border}
+              strokeWidth={1.5}
+            />
             <Text style={styles.emptyTitle}>No messages yet</Text>
-            <Text style={styles.emptyText}>
-              When you send or receive a message,{'\n'}it will show up here
+            <Text style={styles.emptyBody}>
+              Send the first message to a nearby driver.
             </Text>
             <TouchableOpacity
-              style={styles.emptyAction}
-              onPress={() => router.push("/(tabs)/dashboard" as any)}
-              activeOpacity={0.8}
+              style={styles.emptyBtn}
+              onPress={() => router.push("/send-message")}
             >
-              <Text style={styles.emptyActionText}>Send your first message</Text>
+              <Text style={styles.emptyBtnText}>Send a message</Text>
             </TouchableOpacity>
           </View>
-        }
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={designTokens.color.primary}
-          />
-        }
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
+        )}
+        contentContainerStyle={{ paddingBottom: 100 }}
+        showsVerticalScrollIndicator={false}
       />
     </SafeAreaView>
   );
 }
 
-function formatTime(timestamp: string): string {
-  const now = Date.now();
-  const then = new Date(timestamp).getTime();
-  const diff = now - then;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d`;
-  return new Date(timestamp).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
-}
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: designTokens.color.bg,
-  },
+  safe: { flex: 1, backgroundColor: designTokens.color.bg },
   header: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 24,
-    paddingTop: 8,
-    paddingBottom: 4,
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 8,
   },
-  headerTitle: {
-    fontSize: 34,
-    fontWeight: "800" as const,
-    color: designTokens.color.text,
-    letterSpacing: -0.6,
-  },
-  newButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
-    backgroundColor: designTokens.color.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: designTokens.color.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.28,
-    shadowRadius: 12,
-    elevation: 4,
-  },
-  filterRow: {
-    flexDirection: "row",
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    gap: 8,
-  },
-  filterChip: {
-    paddingHorizontal: 18,
-    paddingVertical: 9,
-    borderRadius: designTokens.radius.full,
-    backgroundColor: designTokens.color.surface,
-    borderWidth: 1,
-    borderColor: designTokens.color.borderMuted,
-  },
-  filterChipActive: {
-    backgroundColor: designTokens.color.text,
-    borderColor: designTokens.color.text,
-  },
-  filterText: {
-    fontSize: 14,
-    fontWeight: "600" as const,
-    color: designTokens.color.textMuted,
-  },
-  filterTextActive: {
-    color: "#FFFFFF",
-  },
-  listContent: {
-    paddingHorizontal: 24,
-    paddingBottom: 110,
-    flexGrow: 1,
-  },
-  messageCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 16,
-  },
-  avatarCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-  },
-  avatarSent: {
-    backgroundColor: designTokens.color.primaryLight,
-  },
-  avatarReceived: {
-    backgroundColor: designTokens.color.successSoft,
-  },
-  messageBody: {
-    flex: 1,
-    marginRight: 8,
-  },
-  messageTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  plateName: {
-    fontSize: 16,
-    fontWeight: "600" as const,
-    color: designTokens.color.text,
-    letterSpacing: 0.5,
-  },
-  plateNameUnread: {
+  title: {
+    fontSize: 26,
     fontWeight: "700" as const,
     color: designTokens.color.text,
+    letterSpacing: -0.7,
   },
-  timeText: {
+  composeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    backgroundColor: designTokens.color.primaryLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  filters: {
+    flexDirection: "row",
+    gap: 7,
+    paddingHorizontal: 20,
+    paddingBottom: 10,
+  },
+  filterTab: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 0.5,
+    borderColor: designTokens.color.border,
+  },
+  filterTabOn: {
+    backgroundColor: designTokens.color.primary,
+    borderColor: designTokens.color.primary,
+  },
+  filterText: {
     fontSize: 13,
-    color: designTokens.color.textLight,
-    fontWeight: "500" as const,
-  },
-  preview: {
-    fontSize: 14,
+    fontWeight: "600" as const,
     color: designTokens.color.textMuted,
-    lineHeight: 20,
   },
-  previewUnread: {
-    color: designTokens.color.text,
-    fontWeight: "500" as const,
+  filterTextOn: { color: "#fff" },
+
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    paddingHorizontal: 20,
+    paddingVertical: 13,
+    backgroundColor: designTokens.color.bg,
   },
-  messageRight: {
+  rowUnread: { backgroundColor: designTokens.color.primaryLight },
+  rowMine: {
+    borderLeftWidth: 3,
+    borderLeftColor: designTokens.color.primary,
+    paddingLeft: 17,
+  },
+  rowIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  rowIconSent: { backgroundColor: designTokens.color.primaryLight },
+  rowIconRecv: { backgroundColor: "#E6FAF5" },
+  rowBody: { flex: 1, minWidth: 0 },
+  rowTop: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+    marginBottom: 4,
+  },
+  plateChip: {
+    backgroundColor: "#FFE234",
+    borderRadius: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderWidth: 0.5,
+    borderColor: "#D4B800",
+  },
+  plateChipText: {
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 11,
+    fontWeight: "700" as const,
+    color: "#1A1600",
+    letterSpacing: 1.5,
+  },
+  tag: { borderRadius: 20, paddingHorizontal: 7, paddingVertical: 2 },
+  tagText: { fontSize: 10, fontWeight: "600" as const },
+  rowTime: {
+    fontSize: 11,
+    color: designTokens.color.textMuted,
+    marginLeft: "auto",
+  },
+  rowPreview: {
+    fontSize: 13,
+    color: designTokens.color.textMuted,
+    lineHeight: 18,
+  },
+  rowPreviewBold: {
+    color: designTokens.color.text,
+    fontWeight: "500" as const,
+  },
+  deliveryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    marginTop: 3,
+  },
+  deliveryText: {
+    fontSize: 10,
+    fontWeight: "500" as const,
+    color: designTokens.color.textMuted,
   },
   unreadDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: designTokens.color.primary,
+    flexShrink: 0,
   },
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: designTokens.color.borderMuted,
-    marginLeft: 60,
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: "center",
+
+  empty: {
     alignItems: "center",
-    paddingVertical: 80,
+    paddingTop: 60,
     paddingHorizontal: 40,
-  },
-  emptyIconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 22,
-    backgroundColor: designTokens.color.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 20,
+    gap: 10,
   },
   emptyTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "700" as const,
     color: designTokens.color.text,
-    marginBottom: 8,
-    letterSpacing: -0.2,
+    marginTop: 4,
   },
-  emptyText: {
-    fontSize: 15,
+  emptyBody: {
+    fontSize: 14,
     color: designTokens.color.textMuted,
     textAlign: "center" as const,
-    lineHeight: 22,
-    marginBottom: 28,
+    lineHeight: 20,
   },
-  emptyAction: {
-    backgroundColor: designTokens.color.text,
-    borderRadius: designTokens.radius.lg,
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 4,
+  emptyBtn: {
+    marginTop: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+    backgroundColor: designTokens.color.primary,
+    borderRadius: 12,
   },
-  emptyActionText: {
-    fontSize: 15,
-    fontWeight: "600" as const,
-    color: "#FFFFFF",
-    letterSpacing: 0.1,
-  },
+  emptyBtnText: { fontSize: 14, fontWeight: "700" as const, color: "#fff" },
 });
