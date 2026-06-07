@@ -1,250 +1,167 @@
-import { MessageType, MessageTemplate, QuickReply } from '@/types';
+import { QuickAction, MessageTemplate, QuickReply } from '@/types';
 
-export type QuickActionIntent = 'critical' | 'car' | 'road' | 'community';
-
-export interface QuickActionItem {
-  id: string;
-  label: string;
-  emoji: string;
-  tint: string;
-  type: MessageType;
-  intent: QuickActionIntent;
-  prefilledMessage: string;
-  isNew?: boolean;
-  /** SMS sent immediately even if recipient hasn't downloaded HOMI */
-  highPriority?: boolean;
-}
-
-export const QUICK_ACTIONS: QuickActionItem[] = [
-  // ── CRITICAL ─────────────────────────────────────────────────────────────
+export const quickActions: QuickAction[] = [
   {
-    id: 'fire',
-    label: 'Smoke / fire',
-    emoji: '🔥',
-    tint: '#FF2D2D',
-    type: 'safety',
-    intent: 'critical',
-    highPriority: true,
-    prefilledMessage:
-      'Your car is smoking or smells like burning. Please pull over safely and check your engine right away. Do not ignore this.',
-  },
-  {
-    id: 'child_pet',
-    label: 'Child / pet inside',
-    emoji: '🚨',
-    tint: '#FF2D2D',
-    type: 'child_pet_alert',
-    intent: 'critical',
-    isNew: true,
-    highPriority: true,
-    prefilledMessage:
-      'There appears to be a child or pet left alone in your car. Temperatures inside a car rise dangerously fast. Please return immediately.',
-  },
-  {
-    id: 'leak',
-    label: 'Fluid leaking',
-    emoji: '💧',
-    tint: '#FF2D2D',
-    type: 'leaking_fluid',
-    intent: 'critical',
-    isNew: true,
-    highPriority: true,
-    prefilledMessage:
-      'Your vehicle appears to be leaking fluid underneath. This could be a fire risk — please check your car before moving it.',
-  },
-  {
-    id: 'tow',
-    label: 'Being towed',
-    emoji: '🚨',
-    tint: '#FF4757',
-    type: 'tow_warning',
-    intent: 'critical',
-    highPriority: true,
-    prefilledMessage:
-      'Your car is about to be towed! Please return to it immediately if you possibly can.',
-  },
-
-  // ── CAR ──────────────────────────────────────────────────────────────────
-  {
-    id: 'blocking',
-    label: 'Blocking me',
-    emoji: '🚗',
-    tint: '#FF7A6E',
-    type: 'blocking',
-    intent: 'car',
-    prefilledMessage:
-      "Hi! Your vehicle is blocking mine. Could you please move it when you get a chance? Thanks so much!",
-  },
-  {
-    id: 'lights',
-    label: 'Lights on',
-    emoji: '💡',
-    tint: '#F5A623',
-    type: 'lights_on',
-    intent: 'car',
-    prefilledMessage:
-      "Hi! Just a heads up — your headlights are still on. Saving you a dead battery!",
-  },
-  {
-    id: 'door_open',
-    label: 'Door / boot open',
-    emoji: '🚪',
-    tint: '#F26530',
-    type: 'trunk_open',
-    intent: 'car',
-    isNew: true,
-    prefilledMessage:
-      "Hi! It looks like your car door or boot might still be open. Just wanted to give you a heads up!",
-  },
-  {
-    id: 'window',
-    label: 'Window open',
-    emoji: '🪟',
-    tint: '#4FB6FF',
-    type: 'window_open',
-    intent: 'car',
-    prefilledMessage:
-      "Hi! One of your windows looks open — thought you'd want to know before it rains!",
-  },
-  {
-    id: 'tire',
-    label: 'Low tyre',
-    emoji: '🛞',
-    tint: '#4FB6FF',
-    type: 'flat_tire',
-    intent: 'car',
-    prefilledMessage:
-      "Hi! One of your tyres looks low on air. Might be worth a quick check before you head off!",
-  },
-  {
-    id: 'keys',
-    label: 'Keys visible',
-    emoji: '🔑',
-    tint: '#7E5BF0',
-    type: 'keys_visible',
-    intent: 'car',
-    prefilledMessage:
-      "Hi! Your keys appear to be visible inside your car. Might be worth tucking them out of sight.",
-  },
-  {
-    id: 'sticker',
-    label: 'Expired sticker',
-    emoji: '📋',
-    tint: '#4FB6FF',
-    type: 'general',
-    intent: 'car',
-    isNew: true,
-    prefilledMessage:
-      "Hi! Your registration or inspection sticker looks like it might have expired. Wanted to flag it before you get pulled over!",
-  },
-  {
-    id: 'hit',
-    label: 'Hit & run',
-    emoji: '💥',
-    tint: '#FF4757',
-    type: 'hazard',
-    intent: 'car',
-    prefilledMessage:
-      "Hi — I think your car may have been hit while parked. I witnessed it and wanted to let you know right away. Check for damage.",
-  },
-
-  // ── ROAD ─────────────────────────────────────────────────────────────────
-  {
-    id: 'debris',
-    label: 'Road debris',
-    emoji: '⚠️',
-    tint: '#1B6EF3',
-    type: 'hazard',
-    intent: 'road',
-    isNew: true,
-    prefilledMessage:
-      "Heads up — there's debris or an obstacle on the road ahead. Take it slow and keep an eye out.",
-  },
-  {
-    id: 'erratic',
-    label: 'Erratic driving',
-    emoji: '🚗',
-    tint: '#F5A623',
-    type: 'report_driver',
-    intent: 'road',
-    isNew: true,
-    prefilledMessage:
-      "Hi — I noticed some concerning driving behaviour. Just a friendly heads up to take extra care on the road today. Stay safe.",
-  },
-  {
-    id: 'phone',
-    label: 'Phone at wheel',
-    emoji: '📱',
-    tint: '#F5A623',
-    type: 'report_driver',
-    intent: 'road',
-    isNew: true,
-    prefilledMessage:
-      "Hi — I noticed you may have been on your phone while driving. Just a friendly reminder to stay focused on the road. Drive safe!",
-  },
-  {
-    id: 'parking',
-    label: 'Parking issue',
-    emoji: '⚠️',
-    tint: '#F26530',
+    id: '1',
     type: 'parking_alert',
-    intent: 'road',
-    prefilledMessage:
-      "Hi! Just a quick note — the spot you're in may be ticketed soon. Worth double-checking the sign!",
+    title: 'Parking Alert',
+    icon: 'AlertTriangle',
+    color: '#FFA502',
+    message: 'Your car might get a parking ticket! The meter is about to expire.',
   },
   {
-    id: 'spot',
-    label: 'Spot opening up',
-    emoji: '🅿️',
-    tint: '#2ED3B7',
+    id: '2',
+    type: 'blocking',
+    title: 'Blocking Entry',
+    icon: 'Ban',
+    color: '#FF4757',
+    message: "You're blocking my driveway/parking spot. Could you please move your car?",
+  },
+  {
+    id: '3',
+    type: 'window_open',
+    title: 'Window Open',
+    icon: 'Wind',
+    color: '#3498DB',
+    message: 'Your car window is open. Just wanted to let you know!',
+  },
+  {
+    id: '4',
+    type: 'lights_on',
+    title: 'Lights On',
+    icon: 'Lightbulb',
+    color: '#FFB800',
+    message: 'Your car lights are still on. Battery might drain!',
+  },
+  {
+    id: '5',
+    type: 'keys_visible',
+    title: 'Keys Visible',
+    icon: 'Key',
+    color: '#FF6B7A',
+    message: 'I can see your keys on the roof/hood/inside. Please check!',
+  },
+  {
+    id: '6',
+    type: 'trunk_open',
+    title: 'Trunk Open',
+    icon: 'Package',
+    color: '#00D68F',
+    message: 'Your trunk is open/ajar. Just letting you know!',
+  },
+  {
+    id: '7',
+    type: 'gas_cap',
+    title: 'Gas Cap',
+    icon: 'Fuel',
+    color: '#4A00E0',
+    message: 'Your gas cap is open or missing.',
+  },
+  {
+    id: '8',
+    type: 'flat_tire',
+    title: 'Flat Tire',
+    icon: 'AlertCircle',
+    color: '#FF4757',
+    message: 'Your tire looks flat or low on air.',
+  },
+  {
+    id: '9',
+    type: 'brake_light',
+    title: 'Brake Light Out',
+    icon: 'Zap',
+    color: '#FFA502',
+    message: 'Your brake light appears to be out.',
+  },
+  {
+    id: '10',
+    type: 'child_pet_alert',
+    title: 'Child/Pet Alert',
+    icon: 'Heart',
+    color: '#FF0000',
+    message: 'URGENT: Child/pet seen alone in vehicle. Checking if everything is okay.',
+  },
+  {
+    id: '11',
+    type: 'break_in_alert',
+    title: 'Security Alert',
+    icon: 'Shield',
+    color: '#FF0000',
+    message: 'Someone was seen near your vehicle. Security has been notified.',
+  },
+  {
+    id: '12',
+    type: 'tow_warning',
+    title: 'Tow Warning',
+    icon: 'Truck',
+    color: '#FF4757',
+    message: 'Tow truck is in the area. Your vehicle may be at risk.',
+  },
+  {
+    id: '13',
+    type: 'street_cleaning',
+    title: 'Street Cleaning',
+    icon: 'Droplets',
+    color: '#3498DB',
+    message: 'Street cleaning scheduled. Please move your vehicle.',
+  },
+  {
+    id: '14',
+    type: 'for_sale',
+    title: 'Interested in Car',
+    icon: 'DollarSign',
+    color: '#00D68F',
+    message: "I'm interested in your car. Is it for sale?",
+  },
+  {
+    id: '15',
+    type: 'marketplace',
+    title: 'Marketplace Inquiry',
+    icon: 'ShoppingBag',
+    color: '#4A00E0',
+    message: "Hi! I saw your listing and I'm interested. Is it still available?",
+  },
+  {
+    id: '16',
+    type: 'service_ad',
+    title: 'Service Request',
+    icon: 'Wrench',
+    color: '#FF6B7A',
+    message: "Hi! I need automotive services. Are you available?",
+  },
+  {
+    id: '17',
+    type: 'report_driver',
+    title: 'Report Driver',
+    icon: 'Users',
+    color: '#FF0000',
+    message: 'Reporting unsafe driving behavior. License plate and details have been documented.',
+  },
+  {
+    id: '18',
     type: 'general',
-    intent: 'road',
-    isNew: true,
-    prefilledMessage:
-      "Hey! I'm leaving this parking spot in the next couple of minutes if you need it. Happy to wait while you reverse in.",
-  },
-
-  // ── COMMUNITY ────────────────────────────────────────────────────────────
-  {
-    id: 'thanks_merge',
-    label: 'Thank you for merging',
-    emoji: '🤝',
-    tint: '#2ED3B7',
-    type: 'compliment',
-    intent: 'community',
-    isNew: true,
-    prefilledMessage:
-      "Hey! Just wanted to say a genuine thank you for letting me in. That small gesture made my whole commute. Really appreciated.",
+    title: 'General Message',
+    icon: 'MessageCircle',
+    color: '#8E2DE2',
+    message: '',
   },
   {
-    id: 'nice_ride',
-    label: 'Nice ride',
-    emoji: '❤️',
-    tint: '#2ED3B7',
-    type: 'compliment',
-    intent: 'community',
-    prefilledMessage:
-      "Hey! Just wanted to say — your car looks absolutely amazing. Nice ride! 🤙",
+    id: '19',
+    type: 'vehicle_alarm',
+    title: 'Vehicle Alarm',
+    icon: 'Bell',
+    color: '#FF6B35',
+    message: 'Your car alarm is going off. Just wanted to let you know!',
+  },
+  {
+    id: '20',
+    type: 'leaking_fluid',
+    title: 'Leaking Fluid',
+    icon: 'Droplets',
+    color: '#2E86AB',
+    message: 'Your vehicle appears to be leaking fluid. You might want to check it out.',
   },
 ];
-
-export const QUICK_ACTIONS_BY_INTENT = {
-  critical: QUICK_ACTIONS.filter((a) => a.intent === 'critical'),
-  car: QUICK_ACTIONS.filter((a) => a.intent === 'car'),
-  road: QUICK_ACTIONS.filter((a) => a.intent === 'road'),
-  community: QUICK_ACTIONS.filter((a) => a.intent === 'community'),
-} as const;
-
-// ── Legacy exports preserved ───────────────────────────────────────────────
-
-export const quickActions = QUICK_ACTIONS.map((a) => ({
-  id: a.id,
-  type: a.type,
-  title: a.label,
-  icon: a.emoji,
-  color: a.tint,
-  message: a.prefilledMessage,
-}));
 
 export const goodNeighborTemplates: MessageTemplate[] = [
   {

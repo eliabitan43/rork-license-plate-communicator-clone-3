@@ -610,49 +610,6 @@ function useAppStoreLogic() {
     }
   }, [notificationPrefs, userProfile]);
 
-  const completeOnboarding = useCallback(async () => {
-    await AsyncStorage.setItem(STORAGE_KEYS.ONBOARDING_COMPLETE, JSON.stringify(true));
-    setOnboardingComplete(true);
-  }, []);
-
-  const setUserAsAnonymous = useCallback(async () => {
-    const guestId = `guest_${Date.now()}`;
-    const guestVehicle: Vehicle = {
-      id: `${Date.now()}_v`,
-      licensePlate: 'GUEST',
-      country: 'US',
-      isPrimary: true,
-      isActive: true,
-      verificationStatus: 'pending',
-      addedAt: new Date().toISOString(),
-    };
-    const guestProfile: UserProfile = {
-      id: guestId,
-      displayName: 'Guest',
-      isAnonymous: true,
-      createdAt: new Date().toISOString(),
-      allowNotifications: false,
-      rating: 0,
-      reviewCount: 0,
-      communityScore: 0,
-      badges: [],
-      verificationStatus: 'unverified',
-      accountType: 'personal',
-      blockedUsers: [],
-      trustedContacts: [],
-      emergencyContacts: [],
-      preferredLanguage: 'en',
-      vehicles: [guestVehicle],
-      primaryVehicleId: guestVehicle.id,
-      termsAccepted: true,
-      termsAcceptedAt: new Date().toISOString(),
-      emailVerified: false,
-      phoneVerified: false,
-    };
-    await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(guestProfile));
-    setUserProfile(guestProfile);
-  }, []);
-
   return {
     userProfile,
     messages,
@@ -665,8 +622,6 @@ function useAppStoreLogic() {
     notificationPrefs,
     saveNotificationPrefs,
     saveProfile,
-    completeOnboarding,
-    setUserAsAnonymous,
     sendMessage,
     markMessageAsRead,
     rateUser,
