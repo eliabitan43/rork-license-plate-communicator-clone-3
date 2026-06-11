@@ -36,7 +36,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "app.rork.license-plate-communicator-cz35v3fl-yfuf36id",
+      "package": "app.rork.license_plate_communicator_cz35v3fl_yfuf36id",
       "permissions": [
         "android.permission.VIBRATE",
         "CAMERA",
@@ -113,23 +113,15 @@
           ],
           "enableBackgroundRemoteNotifications": false
         }
-      ]
+      ],
+      "expo-font",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
     },
     "updates": {
-      "enabled": true,
-      "url": "<UNKNOWN>",
-      "requestHeaders": {},
-      "checkAutomatically": "ALWAYS",
-      "fallbackToCacheTimeout": 0,
-      "useEmbeddedUpdate": true,
-      "codeSigningCertificate": "<UNKNOWN>",
-      "codeSigningMetadata": "<UNKNOWN>",
-      "assetPatternsToBeBundled": [],
-      "disableAntiBrickingMeasures": false
-    },
-    "runtimeVersion": "<UNKNOWN>"
+      "enabled": false
+    }
   }
 }
