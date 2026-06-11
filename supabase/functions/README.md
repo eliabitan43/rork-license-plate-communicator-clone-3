@@ -23,6 +23,7 @@ Set with `supabase secrets set KEY=value`:
 | `TWILIO_PHONE_NUMBER` | send-message | E.164, must be SMS-capable for Israel |
 | `EXPO_ACCESS_TOKEN` | both | expo.dev → Access Tokens (enhanced push security) |
 | `PUBLIC_SITE_URL` | send-message | Defaults to `https://homi.app` |
+| `WEBHOOK_SECRET` | send-message | Random string; also set as `x-webhook-secret` HTTP header on the Database Webhook. Required when the function is deployed without JWT verification |
 
 `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are injected automatically.
 
