@@ -12,6 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated from 'react-native-reanimated';
 import {
   Camera,
   ChevronRight,
@@ -21,6 +22,9 @@ import {
   X,
 } from 'lucide-react-native';
 import { designTokens, getShadowStyle } from '@/constants/theme';
+import { enterUp, useShake } from '@/lib/motion';
+import { PressableScale } from '@/components/PressableScale';
+import { SkeletonCard } from '@/components/Skeleton';
 import { useAppStore } from '@/hooks/useAppStore';
 import {
   DASHBOARD_QUICK_ACTIONS,
@@ -54,15 +58,14 @@ interface FeedCardProps {
 
 function FeedCard({ message, isMine, onPress }: FeedCardProps) {
   return (
-    <Pressable
+    <PressableScale
       onPress={() => onPress(message)}
       accessibilityRole="button"
       accessibilityLabel={`Message ${isMine ? 'to your plate' : `to ${message.toPlate}`}: ${message.content}`}
-      style={({ pressed }) => [
+      style={[
         styles.feedCard,
         isMine && styles.feedCardMine,
         !message.isRead && !isMine && styles.feedCardUnread,
-        pressed && styles.pressed,
       ]}
       testID={`feed-card-${message.id}`}
     >
@@ -80,7 +83,7 @@ function FeedCard({ message, isMine, onPress }: FeedCardProps) {
       <Text style={styles.feedContent} numberOfLines={2}>
         {message.content}
       </Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -88,7 +91,9 @@ export default function DashboardScreen() {
   const appStore = useAppStore();
   const [plateInput, setPlateInput] = useState('');
   const [bannerVisible, setBannerVisible] = useState(false);
+  const { animatedStyle: shakeStyle, shake } = useShake();
 
+  const hydrated = appStore?.hydrated ?? false;
   const userProfile = appStore?.userProfile ?? null;
   const messages = useMemo(() => appStore?.messages ?? [], [appStore?.messages]);
   const primaryVehicle = appStore?.primaryVehicle ?? null;
@@ -148,7 +153,14 @@ export default function DashboardScreen() {
   const plateReady = normalizePlate(plateInput).length >= MIN_PLATE_CHARS;
 
   const handleSend = useCallback(() => {
-    if (!plateReady) return;
+    if (!plateReady) {
+      // Invalid submit: shake the plate input + error haptic instead of a dead button.
+      shake();
+      if (Platform.OS !== 'web') {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      }
+      return;
+    }
     if (Platform.OS !== 'web') {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
@@ -156,7 +168,7 @@ export default function DashboardScreen() {
       pathname: '/send-message',
       params: { toPlate: normalizePlate(plateInput) },
     });
-  }, [plateInput, plateReady]);
+  }, [plateInput, plateReady, shake]);
 
   const handleQuickAction = useCallback((action: QuickActionItem) => {
     if (Platform.OS !== 'web') void Haptics.selectionAsync();
@@ -234,9 +246,9 @@ export default function DashboardScreen() {
         )}
 
         {/* Hero — plate input is the #1 element on this screen */}
-        <View style={styles.heroCard} testID="plate-hero">
+        <Animated.View entering={enterUp(0)} style={styles.heroCard} testID="plate-hero">
           <Text style={styles.heroLabel}>MESSAGE A DRIVER</Text>
-          <View style={styles.plateRow}>
+          <Animated.View style={[styles.plateRow, shakeStyle]}>
             <View style={styles.plateFlag}>
               <Text style={styles.plateFlagText}>🇮🇱</Text>
             </View>
@@ -264,12 +276,12 @@ export default function DashboardScreen() {
             >
               <Camera size={20} color={designTokens.plate.text} />
             </Pressable>
-          </View>
+          </Animated.View>
           <Pressable
             onPress={handleSend}
-            disabled={!plateReady}
             accessibilityRole="button"
             accessibilityLabel="Send message to this plate"
+            accessibilityHint={plateReady ? undefined : 'Enter at least 3 plate characters first'}
             accessibilityState={{ disabled: !plateReady }}
             style={({ pressed }) => [
               styles.sendButton,
@@ -301,7 +313,7 @@ export default function DashboardScreen() {
               ))}
             </ScrollView>
           )}
-        </View>
+        </Animated.View>
 
         {/* Quick actions — 6 + "All 19" */}
         <View style={styles.sectionHeader}>
@@ -319,27 +331,32 @@ export default function DashboardScreen() {
           </Pressable>
         </View>
         <View style={styles.quickGrid}>
-          {DASHBOARD_QUICK_ACTIONS.map((action) => (
-            <Pressable
+          {DASHBOARD_QUICK_ACTIONS.map((action, index) => (
+            <Animated.View
               key={action.id}
-              onPress={() => handleQuickAction(action)}
-              accessibilityRole="button"
-              accessibilityLabel={action.label}
-              style={({ pressed }) => [styles.quickTile, pressed && styles.pressed]}
-              testID={`quick-action-${action.id}`}
+              entering={enterUp(80 + index * 40)}
+              style={styles.quickTileWrap}
             >
-              <View style={[styles.quickEmojiWrap, { backgroundColor: `${action.tint}1A` }]}>
-                <Text style={styles.quickEmoji}>{action.emoji}</Text>
-              </View>
-              <Text style={styles.quickLabel} numberOfLines={1}>
-                {action.label}
-              </Text>
-              {action.isNew && (
-                <View style={styles.newBadge}>
-                  <Text style={styles.newBadgeText}>New</Text>
+              <PressableScale
+                onPress={() => handleQuickAction(action)}
+                accessibilityRole="button"
+                accessibilityLabel={action.label}
+                style={styles.quickTile}
+                testID={`quick-action-${action.id}`}
+              >
+                <View style={[styles.quickEmojiWrap, { backgroundColor: `${action.tint}1A` }]}>
+                  <Text style={styles.quickEmoji}>{action.emoji}</Text>
                 </View>
-              )}
-            </Pressable>
+                <Text style={styles.quickLabel} numberOfLines={1}>
+                  {action.label}
+                </Text>
+                {action.isNew && (
+                  <View style={styles.newBadge}>
+                    <Text style={styles.newBadgeText}>New</Text>
+                  </View>
+                )}
+              </PressableScale>
+            </Animated.View>
           ))}
         </View>
 
@@ -368,22 +385,29 @@ export default function DashboardScreen() {
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>NEIGHBORHOOD FEED</Text>
         </View>
-        {feed.length === 0 ? (
-          <View style={styles.emptyFeed} testID="empty-feed">
+        {!hydrated ? (
+          <View testID="feed-skeleton">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </View>
+        ) : feed.length === 0 ? (
+          <Animated.View entering={enterUp(120)} style={styles.emptyFeed} testID="empty-feed">
             <Text style={styles.emptyEmoji}>📭</Text>
             <Text style={styles.emptyTitle}>Nothing here yet</Text>
             <Text style={styles.emptyBody}>
               Messages you send and receive will show up here.
             </Text>
-          </View>
+          </Animated.View>
         ) : (
-          feed.map((msg) => (
-            <FeedCard
-              key={msg.id}
-              message={msg}
-              isMine={myPlates.has(normalizePlate(msg.toPlate))}
-              onPress={handleFeedPress}
-            />
+          feed.map((msg, index) => (
+            <Animated.View key={msg.id} entering={enterUp(Math.min(index, 6) * 40)}>
+              <FeedCard
+                message={msg}
+                isMine={myPlates.has(normalizePlate(msg.toPlate))}
+                onPress={handleFeedPress}
+              />
+            </Animated.View>
           ))
         )}
 
@@ -593,9 +617,11 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 20,
   },
-  quickTile: {
+  quickTileWrap: {
     width: '31%',
     flexGrow: 1,
+  },
+  quickTile: {
     backgroundColor: designTokens.color.surface,
     borderRadius: designTokens.radius.lg,
     borderWidth: 1,
