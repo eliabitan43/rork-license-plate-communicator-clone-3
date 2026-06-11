@@ -478,15 +478,24 @@ function useAppStoreLogic() {
   }, [enqueuePendingSend, markDeliveryState, persistMessages]);
 
   // Realtime: keep threads fresh — new rows addressed to me appear instantly.
+  // Re-subscribes on every auth change: at first mount there is no session yet
+  // (ghost/OTP sign-in happens later in onboarding), so a one-shot subscribe
+  // would never connect on fresh installs.
   useEffect(() => {
     if (!supabase) return;
 
     let channel: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
     let cancelled = false;
 
-    const subscribe = async () => {
-      const { data } = await supabase!.auth.getUser();
-      const userId = data.user?.id;
+    const teardown = () => {
+      if (channel) {
+        void supabase!.removeChannel(channel);
+        channel = null;
+      }
+    };
+
+    const subscribe = (userId: string | undefined) => {
+      teardown();
       if (!userId || cancelled) return;
 
       channel = supabase!
@@ -535,11 +544,15 @@ function useAppStoreLogic() {
         .subscribe();
     };
 
-    void subscribe();
+    void supabase.auth.getUser().then(({ data }) => subscribe(data.user?.id));
+    const { data: authSub } = supabase.auth.onAuthStateChange((_event, session) => {
+      subscribe(session?.user?.id);
+    });
 
     return () => {
       cancelled = true;
-      if (channel) void supabase!.removeChannel(channel);
+      authSub.subscription.unsubscribe();
+      teardown();
     };
   }, [persistMessages]);
 
