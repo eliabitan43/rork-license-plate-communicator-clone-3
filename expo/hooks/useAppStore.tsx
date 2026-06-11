@@ -62,6 +62,9 @@ function useAppStoreLogic() {
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
   const [userRatings, setUserRatings] = useState<UserRating[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  // True once the initial AsyncStorage hydration finished (success or failure).
+  // Gate skeleton loaders on this — isLoading is legacy and never flips.
+  const [hydrated, setHydrated] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean>(false);
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>({ enabled: false, messages: true, listings: true, general: false, platform: 'unknown' });
 
@@ -158,8 +161,14 @@ function useAppStoreLogic() {
       }
     };
 
-    setTimeout(loadData, 50);
-    
+    setTimeout(async () => {
+      try {
+        await loadData();
+      } finally {
+        if (isMounted) setHydrated(true);
+      }
+    }, 50);
+
     return () => {
       isMounted = false;
     };
@@ -655,6 +664,7 @@ function useAppStoreLogic() {
     recentActivity,
     userRatings,
     isLoading,
+    hydrated,
     onboardingComplete,
     unreadCount,
     primaryVehicle,
