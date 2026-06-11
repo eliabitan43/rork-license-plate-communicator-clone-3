@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* HOMI design tokens — mirrors expo/constants/theme.ts + vault Design System */
+:root {
+  --color-bg: #070810;
+  --color-surface-1: #0d0f1c;
+  --color-surface-2: #141729;
+  --color-surface-3: #1a1e35;
+
+  --color-brand: #1b6ef3;
+  --color-brand-soft: rgba(27, 110, 243, 0.1);
+  --color-brand-border: rgba(27, 110, 243, 0.2);
+
+  --color-plate: #ffe234;
+  --color-plate-text: #1a1600;
+  --color-plate-border: #d4b800;
+
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-cyan: #00d4ff;
+
+  --color-text-1: #eef0fb;
+  --color-text-2: #8892b8;
+  --color-text-3: #4a5075;
+
+  --border-1: rgba(255, 255, 255, 0.06);
+  --border-2: rgba(255, 255, 255, 0.11);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text-1);
+}

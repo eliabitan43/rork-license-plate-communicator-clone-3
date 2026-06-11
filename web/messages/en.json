@@ -1,0 +1,40 @@
+{
+  "header": {
+    "fleet": "For fleets",
+    "download": "Download",
+    "languageToggleHint": "עברית בקרוב"
+  },
+  "hero": {
+    "headline": "Message any driver. Anywhere. Instantly.",
+    "subhead": "Type a license plate, send a message. Anonymous, free, and faster than a note on the windshield.",
+    "ctaPrimary": "Get HOMI free",
+    "ctaSecondary": "How it works"
+  },
+  "how": {
+    "title": "How it works",
+    "step1Title": "Type a plate",
+    "step1Body": "Any car, motorcycle, or trailer — no phone number needed.",
+    "step2Title": "Pick a quick action",
+    "step2Body": "19 ready messages, from \"lights on\" to \"being towed\".",
+    "step3Title": "They get it instantly",
+    "step3Body": "Push, SMS, or in-app — even if they don't have HOMI yet."
+  },
+  "map": {
+    "title": "A live layer for your neighborhood",
+    "body": "Road hazards, tow trucks, parking updates — reported by drivers around you, expiring automatically when they're stale."
+  },
+  "fleet": {
+    "title": "Run a fleet?",
+    "body": "Plate-based messaging for every vehicle you operate. Under $5/vehicle/month — no hardware, no contracts.",
+    "cta": "Talk to us"
+  },
+  "download": {
+    "title": "Be reachable wherever you park",
+    "body": "Free forever for drivers. Tel Aviv first — global soon.",
+    "ios": "Download for iPhone",
+    "android": "Get it on Google Play"
+  },
+  "footer": {
+    "privacy": "Sender is anonymous. HOMI never shares phone numbers."
+  }
+}
