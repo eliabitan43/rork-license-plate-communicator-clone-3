@@ -12,7 +12,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated from 'react-native-reanimated';
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import {
   Camera,
   ChevronRight,
@@ -92,6 +97,16 @@ export default function DashboardScreen() {
   const [plateInput, setPlateInput] = useState('');
   const [bannerVisible, setBannerVisible] = useState(false);
   const { animatedStyle: shakeStyle, shake } = useShake();
+
+  // Focus ring: plate border tints brand blue while the input is focused.
+  const focusProgress = useSharedValue(0);
+  const focusRingStyle = useAnimatedStyle(() => ({
+    borderColor: interpolateColor(
+      focusProgress.value,
+      [0, 1],
+      [designTokens.plate.border, designTokens.color.primary],
+    ),
+  }));
 
   const hydrated = appStore?.hydrated ?? false;
   const userProfile = appStore?.userProfile ?? null;
@@ -248,7 +263,7 @@ export default function DashboardScreen() {
         {/* Hero — plate input is the #1 element on this screen */}
         <Animated.View entering={enterUp(0)} style={styles.heroCard} testID="plate-hero">
           <Text style={styles.heroLabel}>MESSAGE A DRIVER</Text>
-          <Animated.View style={[styles.plateRow, shakeStyle]}>
+          <Animated.View style={[styles.plateRow, shakeStyle, focusRingStyle]}>
             <View style={styles.plateFlag}>
               <Text style={styles.plateFlagText}>🇮🇱</Text>
             </View>
@@ -261,6 +276,12 @@ export default function DashboardScreen() {
               autoCapitalize="characters"
               autoCorrect={false}
               maxLength={10}
+              onFocus={() => {
+                focusProgress.value = withTiming(1, { duration: 160 });
+              }}
+              onBlur={() => {
+                focusProgress.value = withTiming(0, { duration: 160 });
+              }}
               accessibilityLabel="License plate number"
               testID="plate-input"
             />
