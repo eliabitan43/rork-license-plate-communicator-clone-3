@@ -14,8 +14,13 @@ import {
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { ZoomIn } from 'react-native-reanimated';
+import { AnimatePresence, MotiView } from 'moti';
+import { ActivityIndicator } from 'react-native';
 import { AlertTriangle, Check, ChevronLeft, Gift, Send } from 'lucide-react-native';
 import { designTokens, getShadowStyle } from '@/constants/theme';
+import { springs } from '@/lib/motion';
+import { PressableScale } from '@/components/PressableScale';
 import { useAppStore } from '@/hooks/useAppStore';
 import { useToast } from '@/hooks/useToast';
 import {
@@ -67,8 +72,9 @@ export default function SendMessageScreen() {
     params.actionId ?? null,
   );
   const [anonymous, setAnonymous] = useState(true);
-  const [sending, setSending] = useState(false);
+  const [phase, setPhase] = useState<'idle' | 'sending' | 'check'>('idle');
   const [sent, setSent] = useState(false);
+  const sending = phase !== 'idle';
 
   const selectedAction = useMemo<QuickActionItem | null>(() => {
     if (!selectedActionId) return null;
@@ -126,7 +132,7 @@ export default function SendMessageScreen() {
       return;
     }
 
-    setSending(true);
+    setPhase('sending');
     try {
       const message: Message = {
         id: `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
@@ -149,12 +155,13 @@ export default function SendMessageScreen() {
       if (Platform.OS !== 'web') {
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       }
-      setSent(true);
+      // Brief checkmark morph on the button before pivoting to the success screen.
+      setPhase('check');
+      setTimeout(() => setSent(true), 450);
     } catch (error) {
       console.error('Send failed:', error);
       showToast('Could not send — try again', 'error');
-    } finally {
-      setSending(false);
+      setPhase('idle');
     }
   }, [anonymous, appStore, body, bodyReady, plate, plateReady, selectedAction, sending, showToast]);
 
@@ -162,9 +169,14 @@ export default function SendMessageScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.successWrap} testID="send-success">
-          <View style={styles.successIcon}>
+          <Animated.View
+            entering={ZoomIn.springify()
+              .damping(springs.bouncy.damping)
+              .stiffness(springs.bouncy.stiffness)}
+            style={styles.successIcon}
+          >
             <Check size={42} color={designTokens.color.primaryOn} strokeWidth={3} />
-          </View>
+          </Animated.View>
           <Text style={styles.successTitle} accessibilityRole="header">
             Message sent
           </Text>
@@ -274,19 +286,18 @@ export default function SendMessageScreen() {
                 {QUICK_ACTIONS_BY_INTENT[intent].map((action) => {
                   const selected = action.id === selectedActionId;
                   return (
-                    <Pressable
+                    <PressableScale
                       key={action.id}
                       onPress={() => handleActionTap(action)}
                       accessibilityRole="button"
                       accessibilityLabel={action.label}
                       accessibilityState={{ selected }}
-                      style={({ pressed }) => [
+                      style={[
                         styles.actionTile,
                         selected && styles.actionTileSelected,
                         selected &&
                           intent === 'critical' &&
                           styles.actionTileSelectedCritical,
-                        pressed && styles.pressed,
                       ]}
                       testID={`action-${action.id}`}
                     >
@@ -299,7 +310,7 @@ export default function SendMessageScreen() {
                           <Text style={styles.newBadgeText}>New</Text>
                         </View>
                       )}
-                    </Pressable>
+                    </PressableScale>
                   );
                 })}
               </View>
@@ -362,10 +373,46 @@ export default function SendMessageScreen() {
             ]}
             testID="send-button"
           >
-            <Send size={18} color={designTokens.color.primaryOn} />
-            <Text style={styles.sendButtonText}>
-              {sending ? 'Sending…' : anonymous ? 'Send anonymously' : 'Send message'}
-            </Text>
+            <AnimatePresence exitBeforeEnter>
+              {phase === 'idle' && (
+                <MotiView
+                  key="idle"
+                  from={{ opacity: 0, scale: 0.85 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.85 }}
+                  transition={{ type: 'timing', duration: 120 }}
+                  style={styles.sendInner}
+                >
+                  <Send size={18} color={designTokens.color.primaryOn} />
+                  <Text style={styles.sendButtonText}>
+                    {anonymous ? 'Send anonymously' : 'Send message'}
+                  </Text>
+                </MotiView>
+              )}
+              {phase === 'sending' && (
+                <MotiView
+                  key="sending"
+                  from={{ opacity: 0, scale: 0.85 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.85 }}
+                  transition={{ type: 'timing', duration: 120 }}
+                  style={styles.sendInner}
+                >
+                  <ActivityIndicator color={designTokens.color.primaryOn} />
+                </MotiView>
+              )}
+              {phase === 'check' && (
+                <MotiView
+                  key="check"
+                  from={{ opacity: 0, scale: 0.6 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ type: 'spring', ...springs.bouncy }}
+                  style={styles.sendInner}
+                >
+                  <Check size={22} color={designTokens.color.primaryOn} strokeWidth={3} />
+                </MotiView>
+              )}
+            </AnimatePresence>
           </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -569,6 +616,11 @@ const styles = StyleSheet.create({
     fontSize: designTokens.type.subhead.size,
     fontWeight: '700',
     color: designTokens.color.primaryOn,
+  },
+  sendInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   successWrap: {
     flex: 1,
