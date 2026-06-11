@@ -11,6 +11,7 @@ import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 import {
+  AlertCircle,
   Check,
   CheckCheck,
   Clock,
@@ -59,6 +60,8 @@ function DeliveryIcon({ message }: { message: Message }) {
       return <CheckCheck size={15} color={designTokens.color.primary} />;
     case 'not_downloaded':
       return <SmartphoneNfc size={14} color={muted} />;
+    case 'failed':
+      return <AlertCircle size={14} color={designTokens.color.error} />;
     case 'delivered':
     default:
       return <Check size={15} color={muted} />;

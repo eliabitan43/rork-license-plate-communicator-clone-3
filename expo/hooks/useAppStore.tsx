@@ -1,6 +1,7 @@
 import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import NetInfo from '@react-native-community/netinfo';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Platform } from 'react-native';
 import { UserProfile, Message, MessageType, RecentActivity, UserRating, PlateRating, UserBadge, Vehicle, EmergencyContact, NotificationPreferences } from '@/types';
 import { safeJsonParse } from '@/utils/eventsStore';
@@ -14,7 +15,28 @@ const STORAGE_KEYS = {
   ONBOARDING_COMPLETE: 'onboarding_complete',
   USER_RATINGS: 'user_ratings',
   NOTIFICATION_PREFS: 'notification_prefs',
+  PENDING_SENDS: 'pending_sends',
 };
+
+interface RemoteMessagePayload {
+  from_user_id: string;
+  to_plate_normalized: string;
+  to_country_code: string;
+  category: string;
+  action_id: string | null;
+  body: string;
+  is_anonymous: boolean;
+  high_priority: boolean;
+}
+
+interface PendingSend {
+  localId: string;
+  payload: RemoteMessagePayload;
+}
+
+function isNetworkError(message: string): boolean {
+  return /network request failed|failed to fetch|fetch failed|timeout/i.test(message);
+}
 
 export type RatingTotals = {
   averageRating: number;
@@ -316,6 +338,70 @@ function useAppStoreLogic() {
     }
   }, []);
 
+  const markDeliveryState = useCallback(
+    (localId: string, state: NonNullable<Message['deliveryState']>) => {
+      let next: Message[] = [];
+      setMessages(prev => {
+        next = prev.map(m => (m.id === localId ? { ...m, deliveryState: state } : m));
+        return next;
+      });
+      void persistMessages(next);
+    },
+    [persistMessages],
+  );
+
+  const enqueuePendingSend = useCallback(async (item: PendingSend) => {
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_SENDS);
+      const queue: PendingSend[] = raw ? safeJsonParse(raw, [], 'pending_sends') : [];
+      queue.push(item);
+      await AsyncStorage.setItem(STORAGE_KEYS.PENDING_SENDS, JSON.stringify(queue));
+    } catch (e) {
+      console.error('Failed to enqueue pending send', e);
+    }
+  }, []);
+
+  const isFlushingRef = useRef(false);
+
+  // Flush queued offline sends. Network failures keep items queued for the
+  // next reconnect; hard server rejections mark the local message failed.
+  const flushPendingSends = useCallback(async () => {
+    if (!supabase || isFlushingRef.current) return;
+    isFlushingRef.current = true;
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_SENDS);
+      const queue: PendingSend[] = raw ? safeJsonParse(raw, [], 'pending_sends') : [];
+      if (queue.length === 0) return;
+
+      const remaining: PendingSend[] = [];
+      for (const item of queue) {
+        const { error } = await supabase.from('messages').insert(item.payload);
+        if (!error) {
+          markDeliveryState(item.localId, 'delivered');
+        } else if (isNetworkError(error.message)) {
+          remaining.push(item);
+        } else {
+          console.error('Queued send rejected:', error.message);
+          markDeliveryState(item.localId, 'failed');
+        }
+      }
+      await AsyncStorage.setItem(STORAGE_KEYS.PENDING_SENDS, JSON.stringify(remaining));
+    } catch (e) {
+      console.error('flushPendingSends failed', e);
+    } finally {
+      isFlushingRef.current = false;
+    }
+  }, [markDeliveryState]);
+
+  // Flush whenever connectivity returns.
+  useEffect(() => {
+    if (!supabase) return;
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      if (state.isConnected) void flushPendingSends();
+    });
+    return unsubscribe;
+  }, [flushPendingSends]);
+
   const sendMessage = useCallback(async (message: Message) => {
     // Optimistic local insert (functional updates — safe under rapid sends).
     const optimistic: Message = {
@@ -348,7 +434,7 @@ function useAppStoreLogic() {
     const userId = authData.user?.id;
     if (!userId) return; // Local-only session (e.g. ghost before Supabase was configured).
 
-    const { error } = await supabase.from('messages').insert({
+    const payload: RemoteMessagePayload = {
       from_user_id: userId,
       // to_user_id stays null — resolved server-side by the send-message Edge Function.
       to_plate_normalized: normalizePlate(message.toPlate),
@@ -358,7 +444,22 @@ function useAppStoreLogic() {
       body: message.content,
       is_anonymous: message.isAnonymous,
       high_priority: message.priority === 'urgent',
-    });
+    };
+
+    // Offline: queue and keep the optimistic message in 'sending'.
+    const net = await NetInfo.fetch();
+    if (net.isConnected === false) {
+      await enqueuePendingSend({ localId: message.id, payload });
+      return;
+    }
+
+    const { error } = await supabase.from('messages').insert(payload);
+
+    if (error && isNetworkError(error.message)) {
+      // Connectivity flapped mid-request: queue instead of failing the send.
+      await enqueuePendingSend({ localId: message.id, payload });
+      return;
+    }
 
     if (error) {
       // Rollback the optimistic insert so the UI can surface the failure honestly.
@@ -373,15 +474,8 @@ function useAppStoreLogic() {
       throw new Error(error.message);
     }
 
-    let confirmed: Message[] = [];
-    setMessages(prev => {
-      confirmed = prev.map(m =>
-        m.id === message.id ? { ...m, deliveryState: 'delivered' as const } : m,
-      );
-      return confirmed;
-    });
-    void persistMessages(confirmed);
-  }, [persistMessages]);
+    markDeliveryState(message.id, 'delivered');
+  }, [enqueuePendingSend, markDeliveryState, persistMessages]);
 
   // Realtime: keep threads fresh — new rows addressed to me appear instantly.
   useEffect(() => {

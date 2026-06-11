@@ -18,6 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { trpc, trpcClient } from "@/lib/trpc";
 import { ToastProvider, ToastContainer } from "@/hooks/useToast";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { OfflineBanner } from "@/components/OfflineBanner";
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -494,6 +495,7 @@ export default function RootLayout() {
               <ToastProvider>
                 <GestureHandlerRootView style={rootStyles.container}>
                   <RootLayoutNav />
+                  <OfflineBanner />
                   <ToastContainer />
                 </GestureHandlerRootView>
               </ToastProvider>
