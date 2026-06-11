@@ -77,6 +77,8 @@ export interface Message {
   isAnonymous: boolean;
   timestamp: string;
   isRead: boolean;
+  /** Sender-side delivery progress. Additive — absent on legacy messages (treat as 'delivered'). */
+  deliveryState?: 'sending' | 'delivered' | 'read' | 'not_downloaded';
   location?: string;
   rating?: number;
   hasBeenRated?: boolean;
