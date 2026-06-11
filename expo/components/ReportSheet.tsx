@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Pressable, Animated, KeyboardAvoidingView, useWindowDimensions, Alert } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, KeyboardAvoidingView, useWindowDimensions, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme, designTokens, componentRecipes } from '@/constants/theme';
 import { EventType, IncidentType, RecipientType, IncidentReport } from '@/types/events';
@@ -11,6 +11,7 @@ import {
 } from 'lucide-react-native';
 import { IncidentTypeSheet } from './IncidentTypeSheet';
 import { SendToSheet } from './SendToSheet';
+import { SheetContainer } from './SheetContainer';
 import { PreviewSendSheet } from './PreviewSendSheet';
 import { useEvents } from '@/hooks/useEvents';
 import * as Haptics from 'expo-haptics';
@@ -75,7 +76,6 @@ export function ReportSheet({ visible, onClose, onSelect, onIncidentSent, initia
   const insets = useSafeAreaInsets();
   const { height: screenHeight } = useWindowDimensions();
   const scrollRef = useRef<ScrollView>(null);
-  const slideAnim = useRef(new Animated.Value(0)).current;
   const { submitReport } = useEvents();
   // const { userProfile } = useAppStore(); // Commented out as not used
   
@@ -96,33 +96,18 @@ export function ReportSheet({ visible, onClose, onSelect, onIncidentSent, initia
         id: `report_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       });
 
-      // Reset scroll position when opening
+      // Reset scroll position when opening. Entrance/dismiss motion is owned by SheetContainer.
       timeoutId = setTimeout(() => {
         scrollRef.current?.scrollTo({ y: 0, animated: false });
       }, 50);
-      
-      // Animate sheet in from bottom
-      Animated.spring(slideAnim, {
-        toValue: 1,
-        useNativeDriver: true,
-        tension: 100,
-        friction: 8,
-      }).start();
-    } else {
-      // Animate sheet out to bottom
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: true,
-      }).start();
     }
-    
+
     return () => {
       if (timeoutId !== null) {
         clearTimeout(timeoutId);
       }
     };
-  }, [visible, slideAnim, initialStep]);
+  }, [visible, initialStep]);
 
   const handleEventSelect = (eventType: EventType) => {
     // Input validation
@@ -412,12 +397,10 @@ export function ReportSheet({ visible, onClose, onSelect, onIncidentSent, initia
   // Dynamic styles that use screenHeight
   const dynamicStyles = {
     sheet: {
-      maxHeight: screenHeight * 0.95,
-      minHeight: screenHeight * 0.75,
-      ...(Platform.OS === 'web' && {
-        maxHeight: screenHeight * 0.95,
-        minHeight: screenHeight * 0.75,
-      }),
+      maxHeight: screenHeight * 0.85,
+      minHeight: screenHeight * 0.6,
+      paddingHorizontal: designTokens.grid.unit * 2.5,
+      paddingBottom: designTokens.grid.unit * 2.5,
     },
     scrollView: {
       maxHeight: screenHeight * 0.65,
@@ -435,32 +418,12 @@ export function ReportSheet({ visible, onClose, onSelect, onIncidentSent, initia
         presentationStyle={Platform.OS === 'ios' ? 'overFullScreen' : undefined}
         statusBarTranslucent={Platform.OS === 'android'}
       >
-        <View style={styles.modalContainer}>
-          <Pressable style={styles.backdrop} onPress={handleClose} testID="report-backdrop" />
-          
-          <KeyboardAvoidingView 
+        <SheetContainer onClose={handleClose} testID="report-sheet-shell">
+          <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.keyboardAvoidingView}
             keyboardVerticalOffset={insets.top}
           >
-            <Animated.View 
-              style={[
-                styles.sheetContainer,
-                {
-                  transform: [{
-                    translateY: slideAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [300, 0], // Slide from center
-                    })
-                  }],
-                  opacity: slideAnim
-                }
-              ]}
-            >
-              <Pressable style={[styles.sheet, dynamicStyles.sheet]} onPress={(e) => e.stopPropagation()}>
-                {/* Handle bar for visual feedback */}
-                <View style={styles.handleBar} />
-                
+              <View style={dynamicStyles.sheet}>
                 <View style={styles.header}>
                   <Text style={styles.title}>Report an Event</Text>
                   <TouchableOpacity 
@@ -515,10 +478,9 @@ export function ReportSheet({ visible, onClose, onSelect, onIncidentSent, initia
                     })}
                   </View>
                 </ScrollView>
-              </Pressable>
-            </Animated.View>
+              </View>
           </KeyboardAvoidingView>
-        </View>
+        </SheetContainer>
       </Modal>
 
       {/* Incident Type Selection */}

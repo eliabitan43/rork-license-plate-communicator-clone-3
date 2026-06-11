@@ -1,7 +1,8 @@
-import React, { useMemo } from 'react';
-import { StyleSheet, TouchableOpacity, ViewStyle, Platform, Animated, Easing, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, ViewStyle, View } from 'react-native';
 import { Plus } from 'lucide-react-native';
 import { theme } from '@/constants/theme';
+import { PressableScale } from '@/components/PressableScale';
 
 interface FABProps {
   onPress: () => void;
@@ -10,43 +11,19 @@ interface FABProps {
 }
 
 export function FAB({ onPress, testID, style }: FABProps) {
-  const scale = useMemo(() => new Animated.Value(1), []);
-
-  const handlePressIn = () => {
-    Animated.timing(scale, {
-      toValue: 0.96,
-      duration: 120,
-      useNativeDriver: Platform.OS !== 'web',
-      easing: Easing.out(Easing.quad),
-    }).start();
-  };
-
-  const handlePressOut = () => {
-    Animated.timing(scale, {
-      toValue: 1,
-      duration: 150,
-      useNativeDriver: Platform.OS !== 'web',
-      easing: Easing.out(Easing.quad),
-    }).start();
-  };
-
   return (
-    <Animated.View style={[styles.fab, style, { transform: [{ scale }] }]}> 
-      <TouchableOpacity
-        activeOpacity={0.85}
-        onPress={onPress}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        style={styles.fabInner}
-        testID={testID ?? 'global-fab'}
-        accessibilityRole="button"
-        accessibilityLabel="Create report or action"
-      >
-        <View style={styles.iconWrap}>
-          <Plus size={24} color={theme.colors.white} />
-        </View>
-      </TouchableOpacity>
-    </Animated.View>
+    <PressableScale
+      onPress={onPress}
+      scaleTo={0.94}
+      style={[styles.fab, style]}
+      testID={testID ?? 'global-fab'}
+      accessibilityRole="button"
+      accessibilityLabel="Create report or action"
+    >
+      <View style={styles.fabInner}>
+        <Plus size={24} color={theme.colors.white} />
+      </View>
+    </PressableScale>
   );
 }
 
@@ -55,7 +32,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 20,
     bottom: 24,
-    shadowColor: '#000',
+    shadowColor: theme.colors.dark,
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.25,
     shadowRadius: 16,
@@ -70,9 +47,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 2,
     borderColor: theme.colors.matteBlack,
-  },
-  iconWrap: {
-    justifyContent: 'center',
-    alignItems: 'center',
   },
 });

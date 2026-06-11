@@ -79,6 +79,13 @@ interface DesignTokens {
     backdrop: string;
   };
 
+  /** Israeli license-plate chip — HOMI's signature visual element. */
+  plate: {
+    background: string;
+    text: string;
+    border: string;
+  };
+
   font: {
     family: string;
     familyMono: string;
@@ -230,6 +237,12 @@ export const designTokens: DesignTokens = {
 
   scrim: {
     backdrop: 'rgba(0,0,0,0.45)',
+  },
+
+  plate: {
+    background: '#FFE234',
+    text: '#1A1600',
+    border: '#D4B800',
   },
 
   font: {

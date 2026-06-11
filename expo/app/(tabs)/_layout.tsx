@@ -1,14 +1,44 @@
 import { Tabs } from "expo-router";
 import React from "react";
 import { View, Text, StyleSheet, Platform } from "react-native";
+import Animated from "react-native-reanimated";
 import { tabIcons } from "@/constants/actionIcons";
 import { designTokens } from "@/constants/theme";
+import { useTabFocusScale } from "@/lib/motion";
 import { useAppStore } from "@/hooks/useAppStore";
 
-const GOLD = '#FFD700';
-const GOLD_INACTIVE = 'rgba(255, 215, 0, 0.55)';
 const TAB_ICON_SIZE = 28;
 const TAB_BAR_HEIGHT = 72;
+
+const ACTIVE = designTokens.color.primary;
+const INACTIVE = designTokens.color.textLight;
+
+type TabIconComponent = (typeof tabIcons)[keyof typeof tabIcons];
+
+interface AnimatedTabIconProps {
+  Icon: TabIconComponent;
+  focused: boolean;
+  testID: string;
+  badgeCount?: number;
+}
+
+function AnimatedTabIcon({ Icon, focused, testID, badgeCount = 0 }: AnimatedTabIconProps) {
+  const { animatedStyle } = useTabFocusScale(focused);
+  return (
+    <Animated.View style={[styles.iconWrap, animatedStyle]} testID={testID}>
+      <Icon
+        size={TAB_ICON_SIZE}
+        color={focused ? ACTIVE : INACTIVE}
+        strokeWidth={focused ? 2.4 : 2}
+      />
+      {badgeCount > 0 && (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{badgeCount > 9 ? "9+" : badgeCount}</Text>
+        </View>
+      )}
+    </Animated.View>
+  );
+}
 
 export default function TabLayout() {
   const appStore = useAppStore();
@@ -17,13 +47,13 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: GOLD,
-        tabBarInactiveTintColor: GOLD_INACTIVE,
+        tabBarActiveTintColor: ACTIVE,
+        tabBarInactiveTintColor: INACTIVE,
         headerShown: false,
         tabBarStyle: {
           backgroundColor: Platform.OS === 'web'
-            ? 'rgba(255, 255, 255, 0.92)'
-            : 'rgba(255, 255, 255, 0.88)',
+            ? designTokens.glass.light.background
+            : designTokens.glass.light.backgroundSolid,
           borderTopWidth: 0,
           position: 'absolute' as const,
           left: 16,
@@ -36,7 +66,7 @@ export default function TabLayout() {
           borderRadius: 24,
           ...Platform.select({
             ios: {
-              shadowColor: '#000',
+              shadowColor: designTokens.glass.light.shadowColor,
               shadowOffset: { width: 0, height: 6 },
               shadowOpacity: 0.12,
               shadowRadius: 24,
@@ -46,7 +76,7 @@ export default function TabLayout() {
             },
             default: {
               borderWidth: 1,
-              borderColor: 'rgba(226, 226, 236, 0.6)',
+              borderColor: designTokens.color.borderMuted,
             },
           }),
         },
@@ -72,43 +102,23 @@ export default function TabLayout() {
         name="dashboard"
         options={{
           title: "Home",
-          tabBarIcon: ({ focused }) => {
-            const HomeIcon = tabIcons.home;
-            return (
-              <View style={styles.iconWrap} testID="icon-home">
-                <HomeIcon
-                  size={TAB_ICON_SIZE}
-                  color={focused ? GOLD : GOLD_INACTIVE}
-                  strokeWidth={focused ? 2.4 : 2}
-                />
-              </View>
-            );
-          },
+          tabBarIcon: ({ focused }) => (
+            <AnimatedTabIcon Icon={tabIcons.home} focused={focused} testID="icon-home" />
+          ),
         }}
       />
       <Tabs.Screen
         name="messages"
         options={{
           title: "Messages",
-          tabBarIcon: ({ focused }) => {
-            const MessagesIcon = tabIcons.messages;
-            return (
-              <View style={styles.iconWrap} testID="icon-messages">
-                <MessagesIcon
-                  size={TAB_ICON_SIZE}
-                  color={focused ? GOLD : GOLD_INACTIVE}
-                  strokeWidth={focused ? 2.4 : 2}
-                />
-                {unreadCount > 0 && (
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>
-                      {unreadCount > 9 ? '9+' : unreadCount}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            );
-          },
+          tabBarIcon: ({ focused }) => (
+            <AnimatedTabIcon
+              Icon={tabIcons.messages}
+              focused={focused}
+              testID="icon-messages"
+              badgeCount={unreadCount}
+            />
+          ),
         }}
       />
       <Tabs.Screen
@@ -121,18 +131,9 @@ export default function TabLayout() {
         name="profile"
         options={{
           title: "Profile",
-          tabBarIcon: ({ focused }) => {
-            const ProfileIcon = tabIcons.profile;
-            return (
-              <View style={styles.iconWrap} testID="icon-profile">
-                <ProfileIcon
-                  size={TAB_ICON_SIZE}
-                  color={focused ? GOLD : GOLD_INACTIVE}
-                  strokeWidth={focused ? 2.4 : 2}
-                />
-              </View>
-            );
-          },
+          tabBarIcon: ({ focused }) => (
+            <AnimatedTabIcon Icon={tabIcons.profile} focused={focused} testID="icon-profile" />
+          ),
         }}
       />
       <Tabs.Screen
@@ -165,10 +166,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 4,
     borderWidth: 2,
-    borderColor: '#FFFFFF',
+    borderColor: designTokens.color.surface,
   },
   badgeText: {
-    color: '#FFFFFF',
+    color: designTokens.color.primaryOn,
     fontSize: 10,
     fontWeight: '700' as const,
   },

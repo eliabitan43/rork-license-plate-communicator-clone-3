@@ -24,7 +24,7 @@ import { ActionIcon, ActionIconGlyph } from "@/components/ActionIcon";
 import { getQuickActionIcon } from "@/constants/actionIcons";
 import { designTokens } from "@/constants/theme";
 import { useAppStore } from "@/hooks/useAppStore";
-import { quickActions } from "@/constants/quickActions";
+import { QUICK_ACTIONS } from "@/constants/quickActions";
 
 const QUICK_TEMPLATES: { id: string; icon: ActionIconGlyph; label: string; type: string }[] = [
   { id: "blocking", icon: getQuickActionIcon("blocking"), label: "Blocking", type: "blocking" },
@@ -98,14 +98,14 @@ export default function ScanScreen() {
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
 
-      const action = quickActions.find((a) => a.type === type);
+      const action = QUICK_ACTIONS.find((a) => a.type === type);
       router.push({
         pathname: "/send-message",
         params: {
           toPlate: trimmed,
           type: type,
-          prefilledMessage: action?.message || "",
-          actionTitle: action?.title || "Send Message",
+          prefilledMessage: action?.prefilledMessage || "",
+          actionTitle: action?.label || "Send Message",
         },
       });
     },

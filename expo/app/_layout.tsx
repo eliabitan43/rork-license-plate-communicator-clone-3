@@ -17,6 +17,9 @@ import { AlertTriangle, RefreshCw } from "lucide-react-native";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { trpc, trpcClient } from "@/lib/trpc";
 import { ToastProvider, ToastContainer } from "@/hooks/useToast";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { OfflineBanner } from "@/components/OfflineBanner";
+import { ensureNotificationChannels } from "@/utils/notifications";
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -29,110 +32,6 @@ const queryClient = new QueryClient({
   },
 });
 
-interface ErrorBoundaryState {
-  hasError: boolean;
-  error?: Error;
-}
-
-class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
-  constructor(props: { children: ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, _errorInfo: any) {
-    const isCorruptionError = error.message.includes('AsyncStorage') || 
-        error.message.includes('JSON') || 
-        error.message.includes('Unexpected character: o') ||
-        error.message.includes('JSON Parse error') ||
-        error.message.includes('Unexpected character') ||
-        error.message.includes('corruption detected') ||
-        error.message.includes('parse error') ||
-        error.message.includes('app will restart');
-    
-    if (isCorruptionError) {
-      console.log('Storage corruption detected - clearing and restarting');
-      AsyncStorage.clear().then(() => {
-        console.log('Storage cleared');
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          setTimeout(() => window.location.reload(), 100);
-        }
-      }).catch(() => {});
-    } else {
-      console.error('App Error:', error.message);
-    }
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <View style={errorStyles.container}>
-          <AlertTriangle size={64} color={theme.colors.danger} />
-          <Text style={errorStyles.title}>Something went wrong</Text>
-          <Text style={errorStyles.message}>
-            The app encountered an unexpected error. Please try restarting.
-          </Text>
-          <TouchableOpacity 
-            style={errorStyles.button}
-            onPress={() => {
-              console.log('ErrorBoundary: Try Again pressed');
-              this.setState({ hasError: false, error: undefined });
-            }}
-            testID="error-try-again"
-          >
-            <RefreshCw size={20} color={theme.colors.white} />
-            <Text style={errorStyles.buttonText}>Try Again</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[errorStyles.button, { marginTop: theme.spacing.md }]}
-            onPress={async () => {
-              console.log('ErrorBoundary: Reset App pressed');
-              try {
-                await AsyncStorage.clear();
-                console.log('ErrorBoundary: AsyncStorage cleared');
-              } catch (e) {
-                console.error('ErrorBoundary: Failed clearing storage', e);
-              }
-              this.setState({ hasError: false, error: undefined });
-              if (Platform.OS === 'web') {
-                try {
-                  if (typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
-                    window.location.reload();
-                  } else if (typeof location !== 'undefined' && typeof location.reload === 'function') {
-                    location.reload();
-                  } else {
-                    // Last resort - navigate to root
-                    window.location.href = '/';
-                  }
-                } catch (reloadError) {
-                  console.log('ErrorBoundary: All reload methods failed', reloadError);
-                  // Try to at least reset the component state
-                  this.setState({ hasError: false, error: undefined });
-                }
-              }
-            }}
-            testID="error-reset-app"
-          >
-            <RefreshCw size={20} color={theme.colors.white} />
-            <Text style={errorStyles.buttonText}>Reset App</Text>
-          </TouchableOpacity>
-          {__DEV__ && this.state.error && (
-            <Text style={errorStyles.errorText}>
-              {this.state.error.toString()}
-            </Text>
-          )}
-
-        </View>
-      );
-    }
-
-    return this.props.children;
-  }
-}
 
 const errorStyles = StyleSheet.create({
   container: {
@@ -383,6 +282,11 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
   const [isStorageReady, setIsStorageReady] = useState(false);
+
+  // Android channels must exist before the first push arrives.
+  useEffect(() => {
+    void ensureNotificationChannels();
+  }, []);
   const [storageError, setStorageError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -597,6 +501,7 @@ export default function RootLayout() {
               <ToastProvider>
                 <GestureHandlerRootView style={rootStyles.container}>
                   <RootLayoutNav />
+                  <OfflineBanner />
                   <ToastContainer />
                 </GestureHandlerRootView>
               </ToastProvider>

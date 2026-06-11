@@ -1,1518 +1,828 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Platform,
+  Pressable,
+  ScrollView,
   StyleSheet,
   Text,
-  View,
-  ScrollView,
-  TouchableOpacity,
-  SafeAreaView,
-  Animated,
-  RefreshControl,
   TextInput,
-  Platform,
-  Keyboard,
-} from "react-native";
-import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+  View,
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
+import { router } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import {
-  ArrowUpRight,
   Camera,
-  Car,
   ChevronRight,
-  Send,
-  Zap,
-  Globe,
+  Gift,
   MapPin,
-  ChevronDown,
-  CheckCircle,
+  Send,
   X,
-  Bike,
-  Truck,
-  Caravan,
-  Sailboat,
-  Bus,
-  Container,
-} from "lucide-react-native";
-import { LinearGradient } from "expo-linear-gradient";
-import { Modal, FlatList } from "react-native";
-import { ActionIcon, ActionIconGlyph } from "@/components/ActionIcon";
-import { getQuickActionIcon, formatCountryLabel } from "@/constants/actionIcons";
-import { designTokens, theme } from "@/constants/theme";
-import { useAppStore } from "@/hooks/useAppStore";
-import { Message, MessageType } from "@/types";
-import { useToast } from "@/hooks/useToast";
-import { COUNTRIES, getRegionsByCountry, getCountryByCode, getRegionByCode } from "@/constants/regions";
+} from 'lucide-react-native';
+import { designTokens, getShadowStyle } from '@/constants/theme';
+import { enterUp, useShake } from '@/lib/motion';
+import { PressableScale } from '@/components/PressableScale';
+import { SkeletonCard } from '@/components/Skeleton';
+import { useAppStore } from '@/hooks/useAppStore';
+import {
+  DASHBOARD_QUICK_ACTIONS,
+  QuickActionItem,
+} from '@/constants/quickActions';
+import { Message } from '@/types';
 
-type QuickActionItem = {
-  id: string;
-  icon: ActionIconGlyph;
-  label: string;
-  emoji: string;
-  tint: string;
-  type: MessageType;
-  prefilledMessage: string;
-};
+const WELCOME_BANNER_KEY = 'welcome_banner_dismissed';
+const MIN_PLATE_CHARS = 3;
+const TAB_BAR_CLEARANCE = 120;
 
-type VehicleType = {
-  id: string;
-  label: string;
-  Icon: React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
-};
-
-const VEHICLE_TYPES: VehicleType[] = [
-  { id: "car", label: "Car", Icon: Car },
-  { id: "motorcycle", label: "Motorcycle", Icon: Bike },
-  { id: "truck", label: "Truck", Icon: Truck },
-  { id: "rv", label: "RV", Icon: Caravan },
-  { id: "trailer", label: "Trailer", Icon: Container },
-  { id: "boat", label: "Boat", Icon: Sailboat },
-  { id: "bus", label: "Bus", Icon: Bus },
-];
-
-const MAX_PLATE_LENGTH = 12;
-const EMPTY_MESSAGES: Message[] = [];
-
-function normalizePlateInput(value: string): string {
-  return value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, MAX_PLATE_LENGTH);
+function normalizePlate(value: string): string {
+  return value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
 }
 
-const QUICK_ACTIONS: QuickActionItem[] = [
-  {
-    id: "blocking",
-    icon: getQuickActionIcon("blocking"),
-    label: "Blocking me",
-    emoji: "🚗",
-    tint: "#FF7A6E",
-    type: "blocking",
-    prefilledMessage: "Hi! Your vehicle is blocking me. Could you please move it when you get a chance? Thanks!",
-  },
-  {
-    id: "lights",
-    icon: getQuickActionIcon("lights_on"),
-    label: "Lights on",
-    emoji: "💡",
-    tint: "#F5A623",
-    type: "lights_on",
-    prefilledMessage: "Hi! Just a heads up — your headlights seem to be on. Wanted to save you a dead battery.",
-  },
-  {
-    id: "window",
-    icon: getQuickActionIcon("window_open"),
-    label: "Window open",
-    emoji: "🪟",
-    tint: "#4FB6FF",
-    type: "window_open",
-    prefilledMessage: "Hi! It looks like one of your windows is open. Thought you'd want to know.",
-  },
-  {
-    id: "parking",
-    icon: getQuickActionIcon("parking_alert"),
-    label: "Parking",
-    emoji: "⚠️",
-    tint: "#F26530",
-    type: "parking_alert",
-    prefilledMessage: "Hi! Just a quick note about where your vehicle is currently parked.",
-  },
-  {
-    id: "keys",
-    icon: getQuickActionIcon("keys_visible"),
-    label: "Keys visible",
-    emoji: "🔑",
-    tint: "#7E5BF0",
-    type: "keys_visible",
-    prefilledMessage: "Hi! It looks like your keys may be visible from outside. Wanted to flag it.",
-  },
-  {
-    id: "compliment",
-    icon: getQuickActionIcon("compliment"),
-    label: "Nice ride",
-    emoji: "❤️",
-    tint: "#2ED3B7",
-    type: "compliment",
-    prefilledMessage: "Hey! Just wanted to say your car looks amazing. Nice ride!",
-  },
-  {
-    id: "towing",
-    icon: getQuickActionIcon("hazard"),
-    label: "Being towed",
-    emoji: "🚨",
-    tint: "#FF4757",
-    type: "general",
-    prefilledMessage: "⚠️ Your vehicle is about to be towed. Please return immediately if possible!",
-  },
-  {
-    id: "hit_and_run",
-    icon: getQuickActionIcon("hazard"),
-    label: "Hit & run",
-    emoji: "💥",
-    tint: "#8E2DE2",
-    type: "general",
-    prefilledMessage: "Heads up — your vehicle appears to have been hit. I have details and may have witnessed it. Please check ASAP.",
-  },
-  {
-    id: "low_tire",
-    icon: getQuickActionIcon("hazard"),
-    label: "Low tire",
-    emoji: "🛞",
-    tint: "#3498DB",
-    type: "general",
-    prefilledMessage: "Hi! One of your tires looks low on air. Thought you'd want to check it.",
-  },
-];
+function formatRelativeTime(iso: string): string {
+  const delta = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(delta / 60_000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+interface FeedCardProps {
+  message: Message;
+  isMine: boolean;
+  onPress: (message: Message) => void;
+}
+
+function FeedCard({ message, isMine, onPress }: FeedCardProps) {
+  return (
+    <PressableScale
+      onPress={() => onPress(message)}
+      accessibilityRole="button"
+      accessibilityLabel={`Message ${isMine ? 'to your plate' : `to ${message.toPlate}`}: ${message.content}`}
+      style={[
+        styles.feedCard,
+        isMine && styles.feedCardMine,
+        !message.isRead && !isMine && styles.feedCardUnread,
+      ]}
+      testID={`feed-card-${message.id}`}
+    >
+      <View style={styles.feedCardTop}>
+        <View style={styles.platePill}>
+          <Text style={styles.platePillText}>{message.toPlate}</Text>
+        </View>
+        {isMine && (
+          <View style={styles.minePill}>
+            <Text style={styles.minePillText}>That's you!</Text>
+          </View>
+        )}
+        <Text style={styles.feedTime}>{formatRelativeTime(message.timestamp)}</Text>
+      </View>
+      <Text style={styles.feedContent} numberOfLines={2}>
+        {message.content}
+      </Text>
+    </PressableScale>
+  );
+}
 
 export default function DashboardScreen() {
   const appStore = useAppStore();
+  const [plateInput, setPlateInput] = useState('');
+  const [bannerVisible, setBannerVisible] = useState(false);
+  const { animatedStyle: shakeStyle, shake } = useShake();
+
+  // Focus ring: plate border tints brand blue while the input is focused.
+  const focusProgress = useSharedValue(0);
+  const focusRingStyle = useAnimatedStyle(() => ({
+    borderColor: interpolateColor(
+      focusProgress.value,
+      [0, 1],
+      [designTokens.plate.border, designTokens.color.primary],
+    ),
+  }));
+
+  const hydrated = appStore?.hydrated ?? false;
   const userProfile = appStore?.userProfile ?? null;
+  const messages = useMemo(() => appStore?.messages ?? [], [appStore?.messages]);
   const primaryVehicle = appStore?.primaryVehicle ?? null;
-  const messages = appStore?.messages ?? EMPTY_MESSAGES;
-  const sendMessage = appStore?.sendMessage;
-  const { showToast } = useToast();
 
-  const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [plateInput, setPlateInput] = useState<string>("");
-  const [inputFocused, setInputFocused] = useState<boolean>(false);
-  const [sendingActionId, setSendingActionId] = useState<string | null>(null);
-  const [helperVisible, setHelperVisible] = useState<boolean>(false);
-  const [recipientCountry, setRecipientCountry] = useState<string>("US");
-  const [recipientState, setRecipientState] = useState<string>("");
-  const [recipientVehicleType, setRecipientVehicleType] = useState<string>("car");
-  const [showCountryPicker, setShowCountryPicker] = useState<boolean>(false);
-  const [showStatePicker, setShowStatePicker] = useState<boolean>(false);
-
-  const plateInputRef = useRef<TextInput | null>(null);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const heroSlideAnim = useRef(new Animated.Value(20)).current;
-  const inputGlow = useRef(new Animated.Value(0)).current;
-  const inputShake = useRef(new Animated.Value(0)).current;
-  const sendScale = useRef(new Animated.Value(1)).current;
-
-  const shakeInput = useCallback(() => {
-    setHelperVisible(true);
-    inputShake.setValue(0);
-    Animated.sequence([
-      Animated.timing(inputShake, { toValue: 1, duration: 55, useNativeDriver: true }),
-      Animated.timing(inputShake, { toValue: -1, duration: 55, useNativeDriver: true }),
-      Animated.timing(inputShake, { toValue: 0.6, duration: 55, useNativeDriver: true }),
-      Animated.timing(inputShake, { toValue: -0.4, duration: 55, useNativeDriver: true }),
-      Animated.timing(inputShake, { toValue: 0, duration: 55, useNativeDriver: true }),
-    ]).start();
-    setTimeout(() => setHelperVisible(false), 2400);
-  }, [inputShake]);
-
-  useEffect(() => {
-    console.log("Dashboard: mount animation");
-    Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 420, useNativeDriver: true }),
-      Animated.spring(heroSlideAnim, { toValue: 0, tension: 58, friction: 9, useNativeDriver: true }),
-    ]).start();
-  }, [fadeAnim, heroSlideAnim]);
-
-  useEffect(() => {
-    Animated.timing(inputGlow, {
-      toValue: inputFocused ? 1 : 0,
-      duration: 180,
-      useNativeDriver: false,
-    }).start();
-  }, [inputFocused, inputGlow]);
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 600);
-  }, []);
-
-  const recentMessages = useMemo<Message[]>(() => {
-    return messages
-      .slice()
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, 4);
-  }, [messages]);
-
-  const userPlates = useMemo<string[]>(
-    () => userProfile?.vehicles?.map((v) => v.licensePlate) ?? [],
-    [userProfile?.vehicles]
+  const myPlates = useMemo(
+    () =>
+      new Set(
+        (userProfile?.vehicles ?? []).map((v) => normalizePlate(v.licensePlate)),
+      ),
+    [userProfile?.vehicles],
   );
 
-  const recentPlates = useMemo<string[]>(() => {
+  const recentPlates = useMemo(() => {
     const seen = new Set<string>();
-    const out: string[] = [];
-    for (const m of messages
-      .slice()
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())) {
-      const plate = userPlates.includes(m.fromPlate) ? m.toPlate : m.fromPlate;
-      if (!plate || userPlates.includes(plate)) continue;
-      if (seen.has(plate)) continue;
-      seen.add(plate);
-      out.push(plate);
-      if (out.length >= 4) break;
+    const plates: string[] = [];
+    const sorted = [...messages].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    );
+    for (const msg of sorted) {
+      const plate = normalizePlate(msg.toPlate);
+      if (plate && !myPlates.has(plate) && !seen.has(plate)) {
+        seen.add(plate);
+        plates.push(msg.toPlate);
+      }
+      if (plates.length >= 5) break;
     }
-    return out;
-  }, [messages, userPlates]);
+    return plates;
+  }, [messages, myPlates]);
 
-  const normalizedPlateInput = normalizePlateInput(plateInput);
-  const hasPlateInput = normalizedPlateInput.length > 0;
+  const feed = useMemo(
+    () =>
+      [...messages]
+        .sort(
+          (a, b) =>
+            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+        )
+        .slice(0, 12),
+    [messages],
+  );
 
-  const triggerImpact = useCallback(async (style: Haptics.ImpactFeedbackStyle) => {
-    try {
-      await Haptics.impactAsync(style);
-    } catch {}
+  useEffect(() => {
+    let mounted = true;
+    AsyncStorage.getItem(WELCOME_BANNER_KEY).then((dismissed) => {
+      if (mounted && !dismissed) setBannerVisible(true);
+    });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  const triggerNotify = useCallback(async (type: Haptics.NotificationFeedbackType) => {
-    try {
-      await Haptics.notificationAsync(type);
-    } catch {}
+  const dismissBanner = useCallback(() => {
+    if (Platform.OS !== 'web') void Haptics.selectionAsync();
+    setBannerVisible(false);
+    void AsyncStorage.setItem(WELCOME_BANNER_KEY, 'true');
   }, []);
 
-  const playSendAnimation = useCallback(() => {
-    sendScale.setValue(1);
-    Animated.sequence([
-      Animated.spring(sendScale, { toValue: 1.08, tension: 180, friction: 6, useNativeDriver: true }),
-      Animated.spring(sendScale, { toValue: 1, tension: 140, friction: 9, useNativeDriver: true }),
-    ]).start();
-  }, [sendScale]);
+  const plateReady = normalizePlate(plateInput).length >= MIN_PLATE_CHARS;
 
-  const handlePlateInputChange = useCallback((text: string) => {
-    setPlateInput(text);
-  }, []);
-
-  const handlePlateInputBlur = useCallback(() => {
-    setInputFocused(false);
-    setPlateInput(normalizePlateInput(plateInput));
-  }, [plateInput]);
-
-  const handleOpenCompose = useCallback(async () => {
-    const trimmedPlate = normalizePlateInput(plateInput);
-    if (!trimmedPlate) {
-      plateInputRef.current?.focus();
-      shakeInput();
-      await triggerImpact(Haptics.ImpactFeedbackStyle.Light);
+  const handleSend = useCallback(() => {
+    if (!plateReady) {
+      // Invalid submit: shake the plate input + error haptic instead of a dead button.
+      shake();
+      if (Platform.OS !== 'web') {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      }
       return;
     }
-    await triggerImpact(Haptics.ImpactFeedbackStyle.Medium);
+    if (Platform.OS !== 'web') {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
     router.push({
-      pathname: "/send-message",
+      pathname: '/send-message',
+      params: { toPlate: normalizePlate(plateInput) },
+    });
+  }, [plateInput, plateReady, shake]);
+
+  const handleQuickAction = useCallback((action: QuickActionItem) => {
+    if (Platform.OS !== 'web') void Haptics.selectionAsync();
+    router.push({
+      pathname: '/send-message',
       params: {
-        toPlate: trimmedPlate,
-        type: "general",
-        prefilledMessage: "",
-        actionTitle: "Send Message",
+        type: action.type,
+        actionId: action.id,
+        prefilledMessage: action.prefilledMessage,
+        actionTitle: action.label,
       },
     });
-  }, [plateInput, triggerImpact, shakeInput]);
+  }, []);
 
-  const handleQuickAction = useCallback(
-    async (item: QuickActionItem) => {
-      const trimmedPlate = normalizePlateInput(plateInput);
-      if (!trimmedPlate) {
-        plateInputRef.current?.focus();
-        shakeInput();
-        await triggerImpact(Haptics.ImpactFeedbackStyle.Light);
-        return;
-      }
+  const handleRecentPlate = useCallback((plate: string) => {
+    if (Platform.OS !== 'web') void Haptics.selectionAsync();
+    router.push({
+      pathname: '/send-message',
+      params: { toPlate: normalizePlate(plate) },
+    });
+  }, []);
 
-      if (!sendMessage) {
-        console.log("Dashboard: sendMessage not available");
-        return;
-      }
-
-      Keyboard.dismiss();
-      setSendingActionId(item.id);
-      playSendAnimation();
-      await triggerImpact(Haptics.ImpactFeedbackStyle.Medium);
-
-      const outgoing: Message = {
-        id: Date.now().toString(),
-        fromPlate: primaryVehicle?.licensePlate || "UNKNOWN",
-        toPlate: trimmedPlate,
-        toCountry: primaryVehicle?.country,
-        fromName: userProfile?.isAnonymous ? undefined : userProfile?.displayName,
-        content: item.prefilledMessage,
-        type: item.type,
-        isAnonymous: userProfile?.isAnonymous ?? true,
-        timestamp: new Date().toISOString(),
-        isRead: false,
-        metadata: { good_neighbor_type: item.id },
-      };
-
-      try {
-        await sendMessage(outgoing);
-        await triggerNotify(Haptics.NotificationFeedbackType.Success);
-        showToast(`${item.emoji} Sent to ${trimmedPlate}`, "success", 1800);
-        setPlateInput("");
-      } catch (e) {
-        console.log("Dashboard: quick send failed", e);
-        showToast("Couldn't send. Try again.", "error", 1800);
-      } finally {
-        setSendingActionId(null);
-      }
+  const handleFeedPress = useCallback(
+    (message: Message) => {
+      if (Platform.OS !== 'web') void Haptics.selectionAsync();
+      void appStore?.markMessageAsRead?.(message.id);
+      router.push({ pathname: '/message-detail', params: { messageId: message.id } });
     },
-    [plateInput, sendMessage, primaryVehicle, userProfile, triggerImpact, triggerNotify, shakeInput, playSendAnimation, showToast]
+    [appStore],
   );
 
-  const handleCameraPress = useCallback(async () => {
-    await triggerImpact(Haptics.ImpactFeedbackStyle.Light);
-    router.push("/(tabs)/scan");
-  }, [triggerImpact]);
-
-  const handleRecentPlatePress = useCallback(
-    async (plate: string) => {
-      await triggerImpact(Haptics.ImpactFeedbackStyle.Light);
-      setPlateInput(plate);
-      plateInputRef.current?.focus();
-    },
-    [triggerImpact]
-  );
-
-  const handleMessagesPress = useCallback(async () => {
-    await triggerImpact(Haptics.ImpactFeedbackStyle.Light);
-    router.push("/(tabs)/messages");
-  }, [triggerImpact]);
-
-  const borderColorInterp = inputGlow.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["rgba(79, 182, 255, 0.24)", "rgba(79, 182, 255, 0.95)"],
-  });
-
-  const inputShadowOpacity = inputGlow.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.1, 0.22],
-  });
+  const greetingName = userProfile?.displayName
+    ? userProfile.displayName
+    : userProfile?.isAnonymous
+      ? 'Ghost driver'
+      : 'Driver';
 
   return (
-    <SafeAreaView style={styles.container} testID="dashboard-screen">
+    <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={designTokens.color.primary} />
-        }
       >
-        <View style={styles.contentWrap}>
-          <Animated.View
-            style={[
-              styles.heroBlock,
-              {
-                opacity: fadeAnim,
-                transform: [{ translateY: heroSlideAnim }, { scale: sendScale }],
-              },
-            ]}
-            testID="home-hero"
-          >
-            <View style={styles.heroTopRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.heroEyebrow}>Message any plate</Text>
-                <Text style={styles.heroTitle}>Who do you want to reach?</Text>
-              </View>
-              {primaryVehicle?.licensePlate ? (
-                <View style={styles.myPlateChip} testID="my-plate-chip">
-                  <Text style={styles.myPlateLabel}>You</Text>
-                  <Text style={styles.myPlateText}>{primaryVehicle.licensePlate}</Text>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  style={styles.claimChip}
-                  onPress={() => {
-                    void triggerImpact(Haptics.ImpactFeedbackStyle.Light);
-                    router.push("/onboarding");
-                  }}
-                  activeOpacity={0.8}
-                  testID="claim-plate-chip"
-                >
-                  <Text style={styles.claimChipLabel}>Claim plate</Text>
-                  <Text style={styles.claimChipHint}>to receive replies</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            <Animated.View
-              style={{
-                transform: [
-                  {
-                    translateX: inputShake.interpolate({
-                      inputRange: [-1, 1],
-                      outputRange: [-8, 8],
-                    }),
-                  },
-                ],
-              }}
-            >
-              <View style={styles.caPlateOuter}>
-                <View style={styles.caPlateInner}>
-                  <View style={styles.caPlateBoltTL} />
-                  <View style={styles.caPlateBoltTR} />
-                  <View style={styles.caPlateBoltBL} />
-                  <View style={styles.caPlateBoltBR} />
-
-                  <View style={styles.caPlateStickerWrap}>
-                    <View style={styles.caPlateStickerMonth}>
-                      <Text style={styles.caPlateStickerMonthText}>04</Text>
-                    </View>
-                    <View style={styles.caPlateStickerYear}>
-                      <Text style={styles.caPlateStickerYearText}>26</Text>
-                    </View>
-                  </View>
-
-                  <TouchableOpacity
-                    style={styles.caPlateCameraButton}
-                    onPress={handleCameraPress}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    testID="camera-button"
-                  >
-                    <Camera size={16} color="#FFFFFF" strokeWidth={2.2} />
-                  </TouchableOpacity>
-
-                  <TextInput
-                    ref={plateInputRef}
-                    style={[styles.caPlateInput, Platform.OS === "web" ? styles.caPlateInputWeb : null]}
-                    placeholder="ABC1234"
-                    placeholderTextColor="rgba(0, 51, 135, 0.22)"
-                    value={plateInput}
-                    onChangeText={handlePlateInputChange}
-                    onFocus={() => setInputFocused(true)}
-                    onBlur={handlePlateInputBlur}
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    spellCheck={false}
-                    returnKeyType="send"
-                    onSubmitEditing={handleOpenCompose}
-                    maxLength={8}
-                    selectionColor="#003F87"
-                    testID="plate-input"
-                  />
-
-                  <Text style={styles.caPlateBottom}>
-                    {(getRegionByCode(recipientState, recipientCountry)?.name) || (getCountryByCode(recipientCountry)?.name) || 'dmv.gov'}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.locationSelectors}>
-                <TouchableOpacity
-                  style={styles.countrySelector}
-                  onPress={() => setShowCountryPicker(true)}
-                  testID="home-country-selector"
-                >
-                  <Globe size={16} color="#FFFFFF" />
-                  <Text style={styles.selectorText} numberOfLines={1}>
-                    {formatCountryLabel(recipientCountry, getCountryByCode(recipientCountry)?.name)}
-                  </Text>
-                  <ChevronDown size={16} color="#FFFFFF" />
-                </TouchableOpacity>
-
-                {getRegionsByCountry(recipientCountry).length > 0 && (
-                  <TouchableOpacity
-                    style={styles.stateSelector}
-                    onPress={() => setShowStatePicker(true)}
-                    testID="home-state-selector"
-                  >
-                    <MapPin size={16} color="#FFFFFF" />
-                    <Text style={styles.selectorText} numberOfLines={1}>
-                      {recipientState ? getRegionByCode(recipientState, recipientCountry)?.name : 'State / Region'}
-                    </Text>
-                    <ChevronDown size={16} color="#FFFFFF" />
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              <View style={styles.vehicleTypeSection}>
-                <View style={styles.vehicleTypeHeader}>
-                  <Text style={styles.vehicleTypeLabel}>Vehicle Type</Text>
-                  <Text style={styles.vehicleTypeHint}>Recognized worldwide</Text>
-                </View>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.vehicleTypeRow}
-                >
-                  {VEHICLE_TYPES.map((vt) => {
-                    const isSelected = recipientVehicleType === vt.id;
-                    const Icon = vt.Icon;
-                    return (
-                      <TouchableOpacity
-                        key={vt.id}
-                        style={[styles.vehicleTypeChip, isSelected && styles.vehicleTypeChipSelected]}
-                        onPress={async () => {
-                          if (Platform.OS !== 'web') {
-                            await Haptics.selectionAsync().catch(() => {});
-                          }
-                          setRecipientVehicleType(vt.id);
-                        }}
-                        activeOpacity={0.8}
-                        testID={`home-vehicle-type-${vt.id}`}
-                      >
-                        <Icon
-                          size={16}
-                          color={isSelected ? '#FFFFFF' : designTokens.color.primary}
-                          strokeWidth={2.2}
-                        />
-                        <Text style={[styles.vehicleTypeChipText, isSelected && styles.vehicleTypeChipTextSelected]}>
-                          {vt.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-
-              {helperVisible ? (
-                <Text style={styles.helperAlert} testID="plate-helper-alert">
-                  Enter a plate to continue
-                </Text>
-              ) : null}
-            </Animated.View>
-
-            {recentPlates.length > 0 ? (
-              <View style={styles.recentPlatesWrap}>
-                <Text style={styles.recentPlatesLabel}>Recent</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.recentPlatesRow}
-                >
-                  {recentPlates.map((plate) => (
-                    <TouchableOpacity
-                      key={plate}
-                      style={styles.recentPlateChip}
-                      onPress={() => void handleRecentPlatePress(plate)}
-                      activeOpacity={0.75}
-                      testID={`recent-plate-${plate}`}
-                    >
-                      <Text style={styles.recentPlateText}>{plate}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-            ) : null}
-
-            <View style={styles.quickHeader}>
-              <View style={styles.quickHeaderLeft}>
-                <Zap size={14} color={designTokens.color.primary} strokeWidth={2.4} fill={designTokens.color.primary} />
-                <Text style={styles.quickHeaderText}>One-tap message</Text>
-              </View>
-              <Text style={styles.quickHeaderHint}>{hasPlateInput ? "Tap to send now" : "Type a plate first"}</Text>
-            </View>
-
-            <View style={styles.quickGrid}>
-              {QUICK_ACTIONS.map((item) => {
-                const isSending = sendingActionId === item.id;
-                return (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[styles.quickTile, isSending && styles.quickTileSending]}
-                    activeOpacity={0.82}
-                    onPress={() => void handleQuickAction(item)}
-                    disabled={isSending}
-                    testID={`quick-action-${item.id}`}
-                  >
-                    <View style={[styles.quickEmojiWrap, { backgroundColor: `${item.tint}1A` }]}>
-                      <Text style={styles.quickEmoji}>{item.emoji}</Text>
-                    </View>
-                    <Text style={styles.quickLabel} numberOfLines={1}>
-                      {item.label}
-                    </Text>
-                    {isSending ? (
-                      <View style={styles.quickSendingDot} />
-                    ) : (
-                      <ActionIcon icon={item.icon} size={22} iconSize={11} style={styles.quickIconGhost} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <TouchableOpacity
-              style={styles.composeButton}
-              activeOpacity={0.85}
-              onPress={() => void handleOpenCompose()}
-              testID="open-message-button"
-            >
-              <LinearGradient
-                colors={["#4FB6FF", "#2ED3B7"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.composeGradient}
-              >
-                <Send size={16} color="#FFFFFF" strokeWidth={2.4} />
-                <Text style={styles.composeText}>Write a custom message</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </Animated.View>
-
-          <View style={styles.sectionHeaderRow}>
-            <View>
-              <Text style={styles.sectionTitle}>Recent activity</Text>
-              <Text style={styles.sectionSubtitle}>Your latest plate conversations</Text>
-            </View>
-            {messages.length > 0 ? (
-              <TouchableOpacity
-                style={styles.seeAllButton}
-                onPress={() => void handleMessagesPress()}
-                activeOpacity={0.75}
-                testID="see-all-messages"
-              >
-                <Text style={styles.seeAllText}>See all</Text>
-                <ArrowUpRight size={13} color={designTokens.color.primary} strokeWidth={2.3} />
-              </TouchableOpacity>
-            ) : null}
+        <View style={styles.header}>
+          <View style={styles.flex}>
+            <Text style={styles.greeting}>Hi, {greetingName} 👋</Text>
+            <Text style={styles.tagline}>{designTokens.brand.slogan}</Text>
           </View>
-
-          {recentMessages.length > 0 ? (
-            <View style={styles.messagesCard}>
-              {recentMessages.map((message, index) => (
-                <MessageRow
-                  key={message.id}
-                  msg={message}
-                  index={index}
-                  isLast={index === recentMessages.length - 1}
-                  userPlates={userPlates}
-                />
-              ))}
-            </View>
-          ) : (
-            <View style={styles.emptyCard} testID="home-empty-state">
-              <View style={styles.emptyIconWrap}>
-                <Send size={22} color={designTokens.color.primary} strokeWidth={2.1} />
-              </View>
-              <Text style={styles.emptyTitle}>No messages yet</Text>
-              <Text style={styles.emptySubtitle}>
-                Type any plate above and tap one of the quick actions to send your first message.
-              </Text>
+          {primaryVehicle && (
+            <View style={styles.myPlateChip} accessibilityLabel={`Your plate ${primaryVehicle.licensePlate}`}>
+              <Text style={styles.myPlateText}>{primaryVehicle.licensePlate}</Text>
             </View>
           )}
         </View>
-      </ScrollView>
 
-      <Modal
-        visible={showCountryPicker}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowCountryPicker(false)}
-      >
-        <View style={styles.pickerModalOverlay}>
-          <View style={styles.pickerModalContent}>
-            <View style={styles.pickerModalHeader}>
-              <Text style={styles.pickerModalTitle}>SELECT COUNTRY</Text>
-              <TouchableOpacity onPress={() => setShowCountryPicker(false)}>
-                <X size={24} color={theme.colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-            <FlatList
-              data={COUNTRIES}
-              keyExtractor={(item) => item.code}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[styles.pickerItem, item.code === recipientCountry && styles.pickerItemSelected]}
-                  onPress={() => {
-                    setRecipientCountry(item.code);
-                    setRecipientState("");
-                    setShowCountryPicker(false);
-                  }}
-                >
-                  <Text style={[styles.pickerItemText, item.code === recipientCountry && styles.pickerItemTextSelected]}>
-                    {formatCountryLabel(item.code, item.name)}
-                  </Text>
-                  {item.code === recipientCountry && <CheckCircle size={20} color={theme.colors.primary} />}
-                </TouchableOpacity>
-              )}
-            />
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={showStatePicker}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowStatePicker(false)}
-      >
-        <View style={styles.pickerModalOverlay}>
-          <View style={styles.pickerModalContent}>
-            <View style={styles.pickerModalHeader}>
-              <Text style={styles.pickerModalTitle}>
-                SELECT {recipientCountry === 'US' ? 'STATE' : recipientCountry === 'CA' ? 'PROVINCE' : 'STATE/REGION'}
+        {bannerVisible && (
+          <View style={styles.welcomeBanner} testID="welcome-banner">
+            <View style={styles.flex}>
+              <Text style={styles.welcomeTitle}>You're in! 🎉</Text>
+              <Text style={styles.welcomeBody}>
+                Send your first message — type any plate below.
               </Text>
-              <TouchableOpacity onPress={() => setShowStatePicker(false)}>
-                <X size={24} color={theme.colors.textSecondary} />
-              </TouchableOpacity>
             </View>
-            <FlatList
-              data={getRegionsByCountry(recipientCountry)}
-              keyExtractor={(item) => item.code}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[styles.pickerItem, item.code === recipientState && styles.pickerItemSelected]}
-                  onPress={() => {
-                    setRecipientState(item.code);
-                    setShowStatePicker(false);
-                  }}
-                >
-                  <Text style={[styles.pickerItemText, item.code === recipientState && styles.pickerItemTextSelected]}>
-                    {item.name}
-                  </Text>
-                  {item.code === recipientState && <CheckCircle size={20} color={theme.colors.primary} />}
-                </TouchableOpacity>
-              )}
-            />
+            <Pressable
+              onPress={dismissBanner}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss welcome banner"
+              testID="welcome-banner-dismiss"
+            >
+              <X size={18} color={designTokens.color.textMuted} />
+            </Pressable>
           </View>
+        )}
+
+        {/* Hero — plate input is the #1 element on this screen */}
+        <Animated.View entering={enterUp(0)} style={styles.heroCard} testID="plate-hero">
+          <Text style={styles.heroLabel}>MESSAGE A DRIVER</Text>
+          <Animated.View style={[styles.plateRow, shakeStyle, focusRingStyle]}>
+            <View style={styles.plateFlag}>
+              <Text style={styles.plateFlagText}>🇮🇱</Text>
+            </View>
+            <TextInput
+              style={styles.plateInput}
+              value={plateInput}
+              onChangeText={(v) => setPlateInput(normalizePlate(v).slice(0, 10))}
+              placeholder="12-345-67"
+              placeholderTextColor={designTokens.plate.border}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={10}
+              onFocus={() => {
+                focusProgress.value = withTiming(1, { duration: 160 });
+              }}
+              onBlur={() => {
+                focusProgress.value = withTiming(0, { duration: 160 });
+              }}
+              accessibilityLabel="License plate number"
+              testID="plate-input"
+            />
+            <Pressable
+              onPress={() => {
+                if (Platform.OS !== 'web') void Haptics.selectionAsync();
+                router.push('/(tabs)/scan');
+              }}
+              style={styles.cameraButton}
+              accessibilityRole="button"
+              accessibilityLabel="Scan plate with camera"
+              hitSlop={6}
+            >
+              <Camera size={20} color={designTokens.plate.text} />
+            </Pressable>
+          </Animated.View>
+          <Pressable
+            onPress={handleSend}
+            accessibilityRole="button"
+            accessibilityLabel="Send message to this plate"
+            accessibilityHint={plateReady ? undefined : 'Enter at least 3 plate characters first'}
+            accessibilityState={{ disabled: !plateReady }}
+            style={({ pressed }) => [
+              styles.sendButton,
+              !plateReady && styles.sendButtonDisabled,
+              pressed && styles.pressed,
+            ]}
+            testID="hero-send-button"
+          >
+            <Send size={18} color={designTokens.color.primaryOn} />
+            <Text style={styles.sendButtonText}>Send message</Text>
+          </Pressable>
+
+          {recentPlates.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.recentRow}
+            >
+              {recentPlates.map((plate) => (
+                <Pressable
+                  key={plate}
+                  onPress={() => handleRecentPlate(plate)}
+                  style={({ pressed }) => [styles.recentChip, pressed && styles.pressed]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Message ${plate} again`}
+                >
+                  <Text style={styles.recentChipText}>{plate}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+        </Animated.View>
+
+        {/* Quick actions — 6 + "All 19" */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>QUICK ACTIONS</Text>
+          <Pressable
+            onPress={() => {
+              if (Platform.OS !== 'web') void Haptics.selectionAsync();
+              router.push('/send-message');
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="See all 19 quick actions"
+            hitSlop={8}
+          >
+            <Text style={styles.sectionLink}>All 19 →</Text>
+          </Pressable>
         </View>
-      </Modal>
+        <View style={styles.quickGrid}>
+          {DASHBOARD_QUICK_ACTIONS.map((action, index) => (
+            <Animated.View
+              key={action.id}
+              entering={enterUp(80 + index * 40)}
+              style={styles.quickTileWrap}
+            >
+              <PressableScale
+                onPress={() => handleQuickAction(action)}
+                accessibilityRole="button"
+                accessibilityLabel={action.label}
+                style={styles.quickTile}
+                testID={`quick-action-${action.id}`}
+              >
+                <View style={[styles.quickEmojiWrap, { backgroundColor: `${action.tint}1A` }]}>
+                  <Text style={styles.quickEmoji}>{action.emoji}</Text>
+                </View>
+                <Text style={styles.quickLabel} numberOfLines={1}>
+                  {action.label}
+                </Text>
+                {action.isNew && (
+                  <View style={styles.newBadge}>
+                    <Text style={styles.newBadgeText}>New</Text>
+                  </View>
+                )}
+              </PressableScale>
+            </Animated.View>
+          ))}
+        </View>
+
+        {/* Map strip */}
+        <Pressable
+          onPress={() => {
+            if (Platform.OS !== 'web') void Haptics.selectionAsync();
+            router.push('/map-live');
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Open live map"
+          style={({ pressed }) => [styles.mapStrip, pressed && styles.pressed]}
+          testID="map-strip"
+        >
+          <View style={styles.mapIconWrap}>
+            <MapPin size={20} color={designTokens.color.primary} />
+          </View>
+          <View style={styles.flex}>
+            <Text style={styles.mapTitle}>Live map</Text>
+            <Text style={styles.mapSubtitle}>Road events & nearby drivers</Text>
+          </View>
+          <ChevronRight size={18} color={designTokens.color.textLight} />
+        </Pressable>
+
+        {/* Neighborhood feed */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>NEIGHBORHOOD FEED</Text>
+        </View>
+        {!hydrated ? (
+          <View testID="feed-skeleton">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </View>
+        ) : feed.length === 0 ? (
+          <Animated.View entering={enterUp(120)} style={styles.emptyFeed} testID="empty-feed">
+            <Text style={styles.emptyEmoji}>📭</Text>
+            <Text style={styles.emptyTitle}>Nothing here yet</Text>
+            <Text style={styles.emptyBody}>
+              Messages you send and receive will show up here.
+            </Text>
+          </Animated.View>
+        ) : (
+          feed.map((msg, index) => (
+            <Animated.View key={msg.id} entering={enterUp(Math.min(index, 6) * 40)}>
+              <FeedCard
+                message={msg}
+                isMine={myPlates.has(normalizePlate(msg.toPlate))}
+                onPress={handleFeedPress}
+              />
+            </Animated.View>
+          ))
+        )}
+
+        {/* Referral card */}
+        <Pressable
+          onPress={() => {
+            if (Platform.OS !== 'web') void Haptics.selectionAsync();
+            router.push('/referral');
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Invite friends, earn HOMI Plus"
+          style={({ pressed }) => [styles.referralCard, pressed && styles.pressed]}
+          testID="referral-card"
+        >
+          <View style={styles.referralIconWrap}>
+            <Gift size={22} color={designTokens.color.primaryOn} />
+          </View>
+          <View style={styles.flex}>
+            <Text style={styles.referralTitle}>Invite 3 friends → 1 month free</Text>
+            <Text style={styles.referralBody}>
+              Friends who register their plate unlock HOMI+ for you.
+            </Text>
+          </View>
+          <ChevronRight size={18} color={designTokens.color.primaryLight} />
+        </Pressable>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
-function MessageRow({
-  msg,
-  index,
-  isLast,
-  userPlates,
-}: {
-  msg: Message;
-  index: number;
-  isLast: boolean;
-  userPlates: string[];
-}) {
-  const isSent = userPlates.includes(msg.fromPlate);
-  const isUnread = !msg.isRead && !isSent;
-
-  return (
-    <TouchableOpacity
-      style={[styles.messageRow, !isLast && styles.messageRowBorder]}
-      onPress={() => {
-        router.push({ pathname: "/message-detail", params: { messageId: msg.id } });
-      }}
-      activeOpacity={0.7}
-      testID={`message-preview-${index}`}
-    >
-      <View style={[styles.messageAvatar, isSent ? styles.messageAvatarSent : styles.messageAvatarReceived]}>
-        <Text style={styles.messageAvatarText}>{isSent ? "↑" : "↓"}</Text>
-      </View>
-      <View style={styles.messageBody}>
-        <View style={styles.messageTopRow}>
-          <Text style={[styles.messagePlate, isUnread && styles.messagePlateUnread]} numberOfLines={1}>
-            {isSent ? msg.toPlate : msg.fromPlate}
-          </Text>
-          <Text style={styles.messageTime}>{formatRelativeTime(msg.timestamp)}</Text>
-        </View>
-        <Text style={[styles.messagePreview, isUnread && styles.messagePreviewUnread]} numberOfLines={1}>
-          {msg.content}
-        </Text>
-      </View>
-      {isUnread ? <View style={styles.unreadDot} /> : null}
-      <ChevronRight size={14} color={designTokens.color.textLight} strokeWidth={2.2} />
-    </TouchableOpacity>
-  );
-}
-
-function formatRelativeTime(timestamp: string): string {
-  const now = Date.now();
-  const then = new Date(timestamp).getTime();
-  const diff = now - then;
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-  return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
 const styles = StyleSheet.create({
-  container: {
+  safe: {
     flex: 1,
-    backgroundColor: "#F5F7FB",
+    backgroundColor: designTokens.color.bg,
   },
-  scrollView: {
+  flex: {
     flex: 1,
   },
-  scrollContent: {
-    paddingBottom: 140,
+  scroll: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: TAB_BAR_CLEARANCE,
   },
-  contentWrap: {
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    gap: 22,
-  },
-  heroBlock: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 28,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: "rgba(21, 42, 72, 0.06)",
-    shadowColor: "#0B1F3A",
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.08,
-    shadowRadius: 26,
-    elevation: 6,
-    gap: 16,
-  },
-  heroTopRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
+    marginBottom: 16,
   },
-  heroEyebrow: {
-    fontSize: 11,
-    fontWeight: "800" as const,
-    letterSpacing: 1.4,
-    textTransform: "uppercase" as const,
-    color: designTokens.color.primary,
-    marginBottom: 6,
-  },
-  heroTitle: {
-    fontSize: 24,
-    fontWeight: "800" as const,
+  greeting: {
+    fontSize: designTokens.type.h3.size,
+    fontWeight: designTokens.type.h3.weight as '700',
     color: designTokens.color.text,
-    letterSpacing: -0.6,
-    lineHeight: 28,
   },
-  myPlateChip: {
-    alignItems: "flex-end",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: "#152A48",
-    borderRadius: 14,
-  },
-  myPlateLabel: {
-    fontSize: 9,
-    fontWeight: "700" as const,
-    color: "rgba(255,255,255,0.65)",
-    letterSpacing: 1,
-    textTransform: "uppercase" as const,
-  },
-  myPlateText: {
-    fontSize: 13,
-    fontWeight: "800" as const,
-    color: "#FFFFFF",
-    letterSpacing: 1.6,
+  tagline: {
+    fontSize: designTokens.type.bodySmall.size,
+    color: designTokens.color.textMuted,
     marginTop: 2,
   },
-  claimChip: {
-    alignItems: "flex-end",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: "rgba(46, 211, 183, 0.14)",
-    borderRadius: 14,
+  myPlateChip: {
+    backgroundColor: designTokens.plate.background,
     borderWidth: 1,
-    borderColor: "rgba(46, 211, 183, 0.5)",
+    borderColor: designTokens.plate.border,
+    borderRadius: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
   },
-  claimChipLabel: {
-    fontSize: 12,
-    fontWeight: "800" as const,
-    color: "#159A7E",
-    letterSpacing: 0.2,
+  myPlateText: {
+    color: designTokens.plate.text,
+    fontWeight: '700',
+    fontSize: designTokens.type.small.size,
+    letterSpacing: 1.5,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
   },
-  claimChipHint: {
-    fontSize: 10,
-    fontWeight: "600" as const,
-    color: "#159A7E",
-    marginTop: 1,
-    opacity: 0.85,
+  welcomeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: designTokens.color.successSoft,
+    borderRadius: designTokens.radius.lg,
+    padding: 14,
+    marginBottom: 14,
   },
-  heroInputCard: {
-    backgroundColor: "#F8FAFD",
-    borderRadius: 20,
-    borderWidth: 2,
-    padding: 8,
-    shadowColor: "#4FB6FF",
-    shadowOffset: { width: 0, height: 8 },
-    shadowRadius: 20,
-    elevation: 3,
+  welcomeTitle: {
+    fontSize: designTokens.type.subheadSmall.size,
+    fontWeight: '700',
+    color: designTokens.color.text,
   },
-  plateInputRow: {
-    flexDirection: "row",
-    alignItems: "center",
+  welcomeBody: {
+    fontSize: designTokens.type.bodySmall.size,
+    color: designTokens.color.textMuted,
+    marginTop: 2,
   },
-  plateIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(79, 182, 255, 0.14)",
-    marginRight: 10,
+  heroCard: {
+    backgroundColor: designTokens.color.surface,
+    borderRadius: designTokens.radius.xl,
+    borderWidth: 1,
+    borderColor: designTokens.glass.accent.border,
+    padding: 18,
+    marginBottom: 20,
+    ...getShadowStyle('md'),
   },
-  plateIconWrapFocused: {
-    backgroundColor: "#4FB6FF",
+  heroLabel: {
+    fontSize: designTokens.type.overline.size,
+    fontWeight: designTokens.type.overline.weight as '700',
+    letterSpacing: designTokens.type.overline.letterSpacing,
+    color: designTokens.color.textMuted,
+    marginBottom: 12,
+  },
+  plateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: designTokens.plate.background,
+    borderWidth: 1.5,
+    borderColor: designTokens.plate.border,
+    borderRadius: designTokens.radius.md,
+    overflow: 'hidden',
+  },
+  plateFlag: {
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    borderRightWidth: 1,
+    borderRightColor: designTokens.plate.border,
+  },
+  plateFlagText: {
+    fontSize: 18,
   },
   plateInput: {
     flex: 1,
-    fontSize: 26,
-    fontWeight: "800" as const,
-    letterSpacing: 3.2,
-    color: designTokens.color.text,
-    paddingVertical: 10,
-  },
-  plateInputWeb: {
-    textTransform: "uppercase" as const,
+    paddingHorizontal: 14,
+    minHeight: 56,
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: 3,
+    color: designTokens.plate.text,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
   },
   cameraButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#152A48",
+    width: 48,
+    minHeight: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderLeftWidth: 1,
+    borderLeftColor: designTokens.plate.border,
   },
-  helperAlert: {
-    fontSize: 12,
-    fontWeight: "700" as const,
-    color: "#F26530",
-    marginTop: 8,
-    marginLeft: 12,
-  },
-  recentPlatesWrap: {
+  sendButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
+    backgroundColor: designTokens.color.primary,
+    borderRadius: designTokens.radius.lg,
+    minHeight: 52,
+    marginTop: 12,
+    ...getShadowStyle('sm'),
+    shadowColor: designTokens.color.primary,
   },
-  recentPlatesLabel: {
-    fontSize: 11,
-    fontWeight: "700" as const,
-    letterSpacing: 1.2,
-    textTransform: "uppercase" as const,
-    color: designTokens.color.textLight,
+  sendButtonDisabled: {
+    opacity: designTokens.state.disabled.opacity,
   },
-  recentPlatesRow: {
+  sendButtonText: {
+    fontSize: designTokens.type.subhead.size,
+    fontWeight: '700',
+    color: designTokens.color.primaryOn,
+  },
+  recentRow: {
     gap: 8,
-    paddingRight: 8,
+    marginTop: 14,
   },
-  recentPlateChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: "rgba(79, 182, 255, 0.12)",
+  recentChip: {
+    backgroundColor: designTokens.color.surfaceWarm,
     borderWidth: 1,
-    borderColor: "rgba(79, 182, 255, 0.28)",
+    borderColor: designTokens.color.border,
+    borderRadius: designTokens.radius.full,
+    paddingHorizontal: 14,
+    minHeight: 36,
+    justifyContent: 'center',
   },
-  recentPlateText: {
-    fontSize: 13,
-    fontWeight: "800" as const,
-    letterSpacing: 1.4,
-    color: "#1B3A64",
-  },
-  quickHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 10,
-  },
-  quickHeaderLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  quickHeaderText: {
-    fontSize: 13,
-    fontWeight: "800" as const,
+  recentChipText: {
+    fontSize: designTokens.type.bodySmall.size,
+    fontWeight: '600',
     color: designTokens.color.text,
-    letterSpacing: 0.2,
+    letterSpacing: 1,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
   },
-  quickHeaderHint: {
-    fontSize: 12,
-    fontWeight: "600" as const,
-    color: designTokens.color.textLight,
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  sectionTitle: {
+    fontSize: designTokens.type.overline.size,
+    fontWeight: designTokens.type.overline.weight as '700',
+    letterSpacing: designTokens.type.overline.letterSpacing,
+    color: designTokens.color.textMuted,
+  },
+  sectionLink: {
+    fontSize: designTokens.type.bodySmall.size,
+    fontWeight: '700',
+    color: designTokens.color.primary,
   },
   quickGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    rowGap: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 20,
+  },
+  quickTileWrap: {
+    width: '31%',
+    flexGrow: 1,
   },
   quickTile: {
-    width: "31.5%",
+    backgroundColor: designTokens.color.surface,
+    borderRadius: designTokens.radius.lg,
+    borderWidth: 1,
+    borderColor: designTokens.color.borderMuted,
     paddingVertical: 14,
     paddingHorizontal: 8,
-    borderRadius: 18,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "rgba(21, 42, 72, 0.08)",
-    alignItems: "center",
-    gap: 6,
-    shadowColor: "#0B1F3A",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  quickTileSending: {
-    borderColor: designTokens.color.primary,
-    backgroundColor: "rgba(79, 182, 255, 0.08)",
+    alignItems: 'center',
+    minHeight: 92,
+    ...getShadowStyle('sm'),
   },
   quickEmojiWrap: {
     width: 40,
     height: 40,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
+    borderRadius: designTokens.radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
   },
   quickEmoji: {
-    fontSize: 22,
+    fontSize: 20,
   },
   quickLabel: {
-    fontSize: 12,
-    fontWeight: "700" as const,
+    fontSize: designTokens.type.small.size,
+    fontWeight: '600',
     color: designTokens.color.text,
-    textAlign: "center" as const,
+    textAlign: 'center',
   },
-  quickIconGhost: {
-    opacity: 0,
-    height: 0,
+  newBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: designTokens.color.accent,
+    borderRadius: designTokens.radius.full,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
-  quickSendingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: designTokens.color.primary,
+  newBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: designTokens.color.primaryOn,
   },
-  composeButton: {
-    borderRadius: 16,
-    overflow: "hidden",
-    shadowColor: "#4FB6FF",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.22,
-    shadowRadius: 16,
-    elevation: 5,
-  },
-  composeGradient: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    minHeight: 50,
-  },
-  composeText: {
-    fontSize: 14,
-    fontWeight: "800" as const,
-    color: "#FFFFFF",
-    letterSpacing: 0.2,
-  },
-  sectionHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-end",
+  mapStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
-    paddingHorizontal: 2,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: "800" as const,
-    color: designTokens.color.text,
-    letterSpacing: -0.4,
-  },
-  sectionSubtitle: {
-    fontSize: 13,
-    color: designTokens.color.textMuted,
-    marginTop: 2,
-  },
-  seeAllButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingVertical: 6,
-  },
-  seeAllText: {
-    fontSize: 14,
-    fontWeight: "700" as const,
-    color: designTokens.color.primary,
-  },
-  messagesCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
+    backgroundColor: designTokens.color.surface,
+    borderRadius: designTokens.radius.lg,
     borderWidth: 1,
-    borderColor: "rgba(21, 42, 72, 0.06)",
-    overflow: "hidden",
-    shadowColor: "#0B1F3A",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.05,
-    shadowRadius: 14,
-    elevation: 2,
+    borderColor: designTokens.color.borderMuted,
+    padding: 14,
+    marginBottom: 20,
+    ...getShadowStyle('sm'),
   },
-  messageRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  messageRowBorder: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(21, 42, 72, 0.08)",
-  },
-  messageAvatar: {
+  mapIconWrap: {
     width: 40,
     height: 40,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-  messageAvatarSent: {
-    backgroundColor: "rgba(79, 182, 255, 0.16)",
-  },
-  messageAvatarReceived: {
-    backgroundColor: "rgba(46, 211, 183, 0.14)",
-  },
-  messageAvatarText: {
-    fontSize: 16,
-    fontWeight: "700" as const,
-    color: designTokens.color.text,
-  },
-  messageBody: {
-    flex: 1,
-    marginRight: 8,
-  },
-  messageTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 3,
-    gap: 10,
-  },
-  messagePlate: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "700" as const,
-    color: designTokens.color.text,
-    letterSpacing: 0.6,
-  },
-  messagePlateUnread: {
-    color: designTokens.color.primary,
-  },
-  messageTime: {
-    fontSize: 12,
-    fontWeight: "600" as const,
-    color: designTokens.color.textLight,
-  },
-  messagePreview: {
-    fontSize: 13,
-    color: designTokens.color.textMuted,
-  },
-  messagePreviewUnread: {
-    color: designTokens.color.text,
-    fontWeight: "600" as const,
-  },
-  unreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: designTokens.color.primary,
-    marginRight: 8,
-  },
-  emptyCard: {
-    alignItems: "center",
-    paddingHorizontal: 24,
-    paddingVertical: 34,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: "rgba(21, 42, 72, 0.06)",
-  },
-  emptyIconWrap: {
-    width: 58,
-    height: 58,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(79, 182, 255, 0.14)",
-    marginBottom: 14,
-  },
-  emptyTitle: {
-    fontSize: 17,
-    fontWeight: "800" as const,
-    color: designTokens.color.text,
-    marginBottom: 6,
-    textAlign: "center" as const,
-  },
-  emptySubtitle: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: designTokens.color.textMuted,
-    textAlign: "center" as const,
-  },
-  caPlateOuter: {
-    marginTop: 4,
-    marginBottom: 8,
-    borderRadius: 16,
-    padding: 4,
-    backgroundColor: '#0A0A0A',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 14,
-    elevation: 8,
-    alignSelf: 'stretch',
-  },
-  caPlateInner: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 14,
-    borderWidth: 2,
-    borderColor: '#1B1B1B',
+    borderRadius: designTokens.radius.md,
+    backgroundColor: designTokens.color.primaryLight,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 150,
-    position: 'relative',
-    overflow: 'hidden',
   },
-  caPlateInput: {
-    color: '#003F87',
-    fontSize: 52,
-    lineHeight: 60,
-    fontWeight: '900' as const,
-    letterSpacing: 6,
-    textAlign: 'center' as const,
-    paddingVertical: 0,
-    minWidth: 220,
-    textShadowColor: 'rgba(0, 51, 135, 0.18)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 0,
+  mapTitle: {
+    fontSize: designTokens.type.subheadSmall.size,
+    fontWeight: '700',
+    color: designTokens.color.text,
+  },
+  mapSubtitle: {
+    fontSize: designTokens.type.bodySmall.size,
+    color: designTokens.color.textMuted,
+    marginTop: 1,
+  },
+  feedCard: {
+    backgroundColor: designTokens.color.surface,
+    borderRadius: designTokens.radius.lg,
+    borderWidth: 1,
+    borderColor: designTokens.color.borderMuted,
+    padding: 14,
+    marginBottom: 9,
+  },
+  feedCardMine: {
+    borderLeftWidth: 3,
+    borderLeftColor: designTokens.color.success,
+  },
+  feedCardUnread: {
+    borderLeftWidth: 3,
+    borderLeftColor: designTokens.color.primary,
+    backgroundColor: designTokens.color.infoSoft,
+  },
+  feedCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  platePill: {
+    backgroundColor: designTokens.plate.background,
+    borderWidth: 1,
+    borderColor: designTokens.plate.border,
+    borderRadius: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  platePillText: {
+    color: designTokens.plate.text,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
     fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
   },
-  caPlateInputWeb: {
-    textTransform: 'uppercase' as const,
-  },
-  caPlateBottom: {
-    color: '#003F87',
-    fontSize: 11,
-    fontWeight: '800' as const,
-    letterSpacing: 2,
-    marginTop: 6,
-    opacity: 0.7,
-    textTransform: 'uppercase' as const,
-  },
-  caPlateStickerWrap: {
-    position: 'absolute',
-    top: 8,
-    right: 10,
-    flexDirection: 'row',
-    gap: 4,
-  },
-  caPlateStickerMonth: {
-    backgroundColor: '#E63946',
-    borderRadius: 4,
-    paddingHorizontal: 5,
+  minePill: {
+    backgroundColor: designTokens.color.successSoft,
+    borderRadius: designTokens.radius.full,
+    paddingHorizontal: 8,
     paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: '#1B1B1B',
-    minWidth: 26,
-    alignItems: 'center',
   },
-  caPlateStickerMonthText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '900' as const,
-    letterSpacing: 0.5,
+  minePillText: {
+    fontSize: designTokens.type.small.size,
+    fontWeight: '700',
+    color: designTokens.color.success,
   },
-  caPlateStickerYear: {
-    backgroundColor: '#F4B400',
-    borderRadius: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: '#1B1B1B',
-    minWidth: 26,
-    alignItems: 'center',
-  },
-  caPlateStickerYearText: {
-    color: '#1B1B1B',
-    fontSize: 10,
-    fontWeight: '900' as const,
-    letterSpacing: 0.5,
-  },
-  caPlateBoltTL: {
-    position: 'absolute',
-    top: 8,
-    left: 8,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#1B1B1B',
-    opacity: 0.55,
-  },
-  caPlateBoltTR: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#1B1B1B',
-    opacity: 0.55,
-  },
-  caPlateBoltBL: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#1B1B1B',
-    opacity: 0.55,
-  },
-  caPlateBoltBR: {
-    position: 'absolute',
-    bottom: 8,
-    right: 8,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#1B1B1B',
-    opacity: 0.55,
-  },
-  caPlateCameraButton: {
-    position: 'absolute',
-    bottom: 10,
-    right: 12,
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: '#152A48',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  locationSelectors: {
-    flexDirection: 'row',
-    marginTop: 10,
-    gap: 8,
-  },
-  countrySelector: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#152A48',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 6,
-    minHeight: 42,
-  },
-  stateSelector: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#152A48',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 6,
-    minHeight: 42,
-  },
-  selectorText: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700' as const,
-    letterSpacing: 0.2,
-  },
-  vehicleTypeSection: {
-    marginTop: 12,
-    gap: 8,
-  },
-  vehicleTypeHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  vehicleTypeLabel: {
-    fontSize: 11,
-    fontWeight: '800' as const,
-    color: designTokens.color.primary,
-    letterSpacing: 1,
-    textTransform: 'uppercase' as const,
-  },
-  vehicleTypeHint: {
-    fontSize: 10,
-    fontWeight: '600' as const,
+  feedTime: {
+    marginLeft: 'auto',
+    fontSize: designTokens.type.small.size,
     color: designTokens.color.textLight,
-    letterSpacing: 0.4,
   },
-  vehicleTypeRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingRight: 8,
+  feedContent: {
+    fontSize: designTokens.type.bodySmall.size,
+    lineHeight: designTokens.type.bodySmall.lineHeight,
+    color: designTokens.color.text,
   },
-  vehicleTypeChip: {
+  emptyFeed: {
+    alignItems: 'center',
+    paddingVertical: 28,
+    marginBottom: 8,
+  },
+  emptyEmoji: {
+    fontSize: 32,
+    marginBottom: 8,
+  },
+  emptyTitle: {
+    fontSize: designTokens.type.subheadSmall.size,
+    fontWeight: '700',
+    color: designTokens.color.text,
+  },
+  emptyBody: {
+    fontSize: designTokens.type.bodySmall.size,
+    color: designTokens.color.textMuted,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  referralCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: 'rgba(79, 182, 255, 0.35)',
-    minHeight: 36,
-  },
-  vehicleTypeChipSelected: {
+    gap: 12,
     backgroundColor: designTokens.color.primary,
-    borderColor: designTokens.color.primary,
+    borderRadius: designTokens.radius.xl,
+    padding: 16,
+    marginTop: 12,
+    ...getShadowStyle('md'),
     shadowColor: designTokens.color.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 3,
   },
-  vehicleTypeChipText: {
-    fontSize: 12,
-    fontWeight: '700' as const,
-    color: designTokens.color.primary,
-    letterSpacing: 0.2,
-  },
-  vehicleTypeChipTextSelected: {
-    color: '#FFFFFF',
-  },
-  pickerModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  pickerModalContent: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: '80%',
-    paddingBottom: Platform.OS === 'ios' ? 34 : 16,
-  },
-  pickerModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  referralIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: designTokens.radius.md,
+    backgroundColor: designTokens.glass.dark.border,
     alignItems: 'center',
-    padding: 18,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(21, 42, 72, 0.08)',
+    justifyContent: 'center',
   },
-  pickerModalTitle: {
-    fontSize: 16,
-    fontWeight: '800' as const,
-    color: designTokens.color.text,
-    letterSpacing: 0.5,
+  referralTitle: {
+    fontSize: designTokens.type.subheadSmall.size,
+    fontWeight: '700',
+    color: designTokens.color.primaryOn,
   },
-  pickerItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(21, 42, 72, 0.06)',
-    minHeight: 56,
+  referralBody: {
+    fontSize: designTokens.type.bodySmall.size,
+    color: designTokens.color.primaryLight,
+    marginTop: 2,
   },
-  pickerItemSelected: {
-    backgroundColor: 'rgba(79, 182, 255, 0.08)',
-  },
-  pickerItemText: {
-    fontSize: 15,
-    color: designTokens.color.text,
-  },
-  pickerItemTextSelected: {
-    color: designTokens.color.primary,
-    fontWeight: '700' as const,
+  pressed: {
+    opacity: 0.85,
   },
 });

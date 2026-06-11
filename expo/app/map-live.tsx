@@ -6,6 +6,8 @@ import { theme } from '@/constants/theme';
 import { useEvents } from '@/hooks/useEvents';
 import { EventType } from '@/types/events';
 import { AlertCircle, MapPin, Navigation, Plus, ThumbsDown, ThumbsUp, ArrowLeft, Settings } from 'lucide-react-native';
+import Animated from 'react-native-reanimated';
+import { enterUp } from '@/lib/motion';
 import { ReportSheet } from '@/components/ReportSheet';
 import { ThanksButton } from '@/components/ThanksButton';
 import * as Location from 'expo-location';
@@ -251,7 +253,19 @@ export default function MapLive() {
             </View>
           ))}
           {filtered.length === 0 && (
-            <Text style={styles.empty}>No events in view.</Text>
+            <Animated.View entering={enterUp(0)} style={styles.emptyWrap} testID="map-empty">
+              <MapPin size={28} color={theme.colors.textLight} />
+              <Text style={styles.emptyTitle}>All quiet nearby</Text>
+              <Text style={styles.empty}>Spot something on the road? Be the first to report it.</Text>
+              <TouchableOpacity
+                onPress={() => !isSubmitting && setSheetOpen(true)}
+                style={styles.emptyCta}
+                accessibilityRole="button"
+                accessibilityLabel="Report an event"
+              >
+                <Text style={styles.emptyCtaText}>Report an event</Text>
+              </TouchableOpacity>
+            </Animated.View>
           )}
         </ScrollView>
       </View>
@@ -375,7 +389,30 @@ const styles = StyleSheet.create({
   eventItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
   eventText: { flex: 1, color: theme.colors.textPrimary },
   voteBtn: { padding: 8 },
-  empty: { padding: 12, color: theme.colors.textSecondary },
+  empty: { padding: 12, color: theme.colors.textSecondary, textAlign: 'center' as const },
+  emptyWrap: {
+    alignItems: 'center' as const,
+    paddingVertical: 24,
+    gap: 4,
+  },
+  emptyTitle: {
+    fontWeight: '700' as const,
+    color: theme.colors.textPrimary,
+    fontSize: theme.fontSize.md,
+    marginTop: 6,
+  },
+  emptyCta: {
+    marginTop: 6,
+    minHeight: 44,
+    justifyContent: 'center' as const,
+    paddingHorizontal: 18,
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.primary,
+  },
+  emptyCtaText: {
+    color: theme.colors.white,
+    fontWeight: '700' as const,
+  },
   fabRow: { position: 'absolute', bottom: 180, right: 16, flexDirection: 'column', gap: 12 },
   fab: { width: 52, height: 52, borderRadius: 26, backgroundColor: theme.colors.primary, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 3 },
   fabSecondary: { width: 120, flexDirection: 'row', gap: 8, justifyContent: 'center', backgroundColor: theme.colors.cardBg, borderWidth: 1, borderColor: theme.colors.border },

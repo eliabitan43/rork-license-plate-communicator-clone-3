@@ -1,10 +1,12 @@
 import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import NetInfo from '@react-native-community/netinfo';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Platform } from 'react-native';
-import { UserProfile, Message, RecentActivity, UserRating, PlateRating, UserBadge, Vehicle, EmergencyContact, NotificationPreferences } from '@/types';
+import { UserProfile, Message, MessageType, RecentActivity, UserRating, PlateRating, UserBadge, Vehicle, EmergencyContact, NotificationPreferences } from '@/types';
 import { safeJsonParse } from '@/utils/eventsStore';
 import { reputationManager } from '@/utils/reputation';
+import { supabase, isSupabaseConfigured, normalizePlate } from '@/lib/supabase';
 
 const STORAGE_KEYS = {
   USER_PROFILE: 'user_profile',
@@ -13,7 +15,28 @@ const STORAGE_KEYS = {
   ONBOARDING_COMPLETE: 'onboarding_complete',
   USER_RATINGS: 'user_ratings',
   NOTIFICATION_PREFS: 'notification_prefs',
+  PENDING_SENDS: 'pending_sends',
 };
+
+interface RemoteMessagePayload {
+  from_user_id: string;
+  to_plate_normalized: string;
+  to_country_code: string;
+  category: string;
+  action_id: string | null;
+  body: string;
+  is_anonymous: boolean;
+  high_priority: boolean;
+}
+
+interface PendingSend {
+  localId: string;
+  payload: RemoteMessagePayload;
+}
+
+function isNetworkError(message: string): boolean {
+  return /network request failed|failed to fetch|fetch failed|timeout/i.test(message);
+}
 
 export type RatingTotals = {
   averageRating: number;
@@ -62,6 +85,9 @@ function useAppStoreLogic() {
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
   const [userRatings, setUserRatings] = useState<UserRating[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  // True once the initial AsyncStorage hydration finished (success or failure).
+  // Gate skeleton loaders on this — isLoading is legacy and never flips.
+  const [hydrated, setHydrated] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean>(false);
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>({ enabled: false, messages: true, listings: true, general: false, platform: 'unknown' });
 
@@ -158,12 +184,70 @@ function useAppStoreLogic() {
       }
     };
 
-    setTimeout(loadData, 50);
-    
+    setTimeout(async () => {
+      try {
+        await loadData();
+      } finally {
+        if (isMounted) setHydrated(true);
+      }
+    }, 50);
+
     return () => {
       isMounted = false;
     };
   }, []);
+
+  const completeOnboarding = useCallback(async () => {
+    await AsyncStorage.setItem(STORAGE_KEYS.ONBOARDING_COMPLETE, JSON.stringify(true));
+    setOnboardingComplete(true);
+  }, []);
+
+  const setUserAsAnonymous = useCallback(async () => {
+    // Ghost mode: create a minimal local anonymous profile. Never clobber an
+    // existing profile (e.g. a registered user re-running onboarding).
+    if (userProfile) return;
+
+    // Real anonymous session when Supabase is configured; ghost mode must still
+    // work fully offline, so auth failure falls back to a local-only id.
+    let authId: string | null = null;
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.auth.signInAnonymously();
+        if (!error) authId = data.user?.id ?? null;
+        else console.warn('Anonymous sign-in failed, continuing local-only:', error.message);
+      } catch (e) {
+        console.warn('Anonymous sign-in threw, continuing local-only:', e);
+      }
+    }
+
+    const now = new Date().toISOString();
+    const anonProfile: UserProfile = {
+      id: authId ?? `anon_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      isAnonymous: true,
+      createdAt: now,
+      allowNotifications: false,
+      rating: 0,
+      reviewCount: 0,
+      communityScore: 0,
+      badges: [],
+      verificationStatus: 'unverified',
+      accountType: 'personal',
+      blockedUsers: [],
+      trustedContacts: [],
+      emergencyContacts: [],
+      preferredLanguage: 'en',
+      vehicles: [],
+      termsAccepted: true,
+      termsAcceptedAt: now,
+      emailVerified: false,
+      phoneVerified: false,
+    };
+
+    // Persist directly instead of via saveProfile() so the onboarding flag is
+    // only flipped by the explicit completeOnboarding() call in the flow.
+    await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(anonProfile));
+    setUserProfile(anonProfile);
+  }, [userProfile]);
 
   const saveProfile = useCallback(async (profile: UserProfile) => {
     try {
@@ -246,26 +330,231 @@ function useAppStoreLogic() {
     }
   }, []);
 
-  const sendMessage = useCallback(async (message: Message) => {
+  const persistMessages = useCallback(async (next: Message[]) => {
     try {
-      const newMessages = [...messages, message];
-      await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(newMessages));
-      setMessages(newMessages);
-
-      // Add to recent activity
-      const activity: RecentActivity = {
-        id: Date.now().toString(),
-        type: 'sent',
-        message,
-      };
-      const newActivity = [activity, ...recentActivity].slice(0, 50); // Keep last 50
-      await AsyncStorage.setItem(STORAGE_KEYS.RECENT_ACTIVITY, JSON.stringify(newActivity));
-      setRecentActivity(newActivity);
-    } catch (error) {
-      console.error('Error sending message:', error);
-      throw error;
+      await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(next));
+    } catch (e) {
+      console.error('Failed to persist messages', e);
     }
-  }, [messages, recentActivity]);
+  }, []);
+
+  const markDeliveryState = useCallback(
+    (localId: string, state: NonNullable<Message['deliveryState']>) => {
+      let next: Message[] = [];
+      setMessages(prev => {
+        next = prev.map(m => (m.id === localId ? { ...m, deliveryState: state } : m));
+        return next;
+      });
+      void persistMessages(next);
+    },
+    [persistMessages],
+  );
+
+  const enqueuePendingSend = useCallback(async (item: PendingSend) => {
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_SENDS);
+      const queue: PendingSend[] = raw ? safeJsonParse(raw, [], 'pending_sends') : [];
+      queue.push(item);
+      await AsyncStorage.setItem(STORAGE_KEYS.PENDING_SENDS, JSON.stringify(queue));
+    } catch (e) {
+      console.error('Failed to enqueue pending send', e);
+    }
+  }, []);
+
+  const isFlushingRef = useRef(false);
+
+  // Flush queued offline sends. Network failures keep items queued for the
+  // next reconnect; hard server rejections mark the local message failed.
+  const flushPendingSends = useCallback(async () => {
+    if (!supabase || isFlushingRef.current) return;
+    isFlushingRef.current = true;
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_SENDS);
+      const queue: PendingSend[] = raw ? safeJsonParse(raw, [], 'pending_sends') : [];
+      if (queue.length === 0) return;
+
+      const remaining: PendingSend[] = [];
+      for (const item of queue) {
+        const { error } = await supabase.from('messages').insert(item.payload);
+        if (!error) {
+          markDeliveryState(item.localId, 'delivered');
+        } else if (isNetworkError(error.message)) {
+          remaining.push(item);
+        } else {
+          console.error('Queued send rejected:', error.message);
+          markDeliveryState(item.localId, 'failed');
+        }
+      }
+      await AsyncStorage.setItem(STORAGE_KEYS.PENDING_SENDS, JSON.stringify(remaining));
+    } catch (e) {
+      console.error('flushPendingSends failed', e);
+    } finally {
+      isFlushingRef.current = false;
+    }
+  }, [markDeliveryState]);
+
+  // Flush whenever connectivity returns.
+  useEffect(() => {
+    if (!supabase) return;
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      if (state.isConnected) void flushPendingSends();
+    });
+    return unsubscribe;
+  }, [flushPendingSends]);
+
+  const sendMessage = useCallback(async (message: Message) => {
+    // Optimistic local insert (functional updates — safe under rapid sends).
+    const optimistic: Message = {
+      ...message,
+      deliveryState: isSupabaseConfigured ? 'sending' : (message.deliveryState ?? 'delivered'),
+    };
+
+    let nextMessages: Message[] = [];
+    setMessages(prev => {
+      nextMessages = [...prev, optimistic];
+      return nextMessages;
+    });
+    void persistMessages(nextMessages);
+
+    const activity: RecentActivity = {
+      id: Date.now().toString(),
+      type: 'sent',
+      message: optimistic,
+    };
+    let nextActivity: RecentActivity[] = [];
+    setRecentActivity(prev => {
+      nextActivity = [activity, ...prev].slice(0, 50);
+      return nextActivity;
+    });
+    void AsyncStorage.setItem(STORAGE_KEYS.RECENT_ACTIVITY, JSON.stringify(nextActivity)).catch(() => {});
+
+    if (!supabase) return;
+
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData.user?.id;
+    if (!userId) return; // Local-only session (e.g. ghost before Supabase was configured).
+
+    const payload: RemoteMessagePayload = {
+      from_user_id: userId,
+      // to_user_id stays null — resolved server-side by the send-message Edge Function.
+      to_plate_normalized: normalizePlate(message.toPlate),
+      to_country_code: message.toCountry ?? 'IL',
+      category: message.type,
+      action_id: typeof message.metadata?.actionId === 'string' ? message.metadata.actionId : null,
+      body: message.content,
+      is_anonymous: message.isAnonymous,
+      high_priority: message.priority === 'urgent',
+    };
+
+    // Offline: queue and keep the optimistic message in 'sending'.
+    const net = await NetInfo.fetch();
+    if (net.isConnected === false) {
+      await enqueuePendingSend({ localId: message.id, payload });
+      return;
+    }
+
+    const { error } = await supabase.from('messages').insert(payload);
+
+    if (error && isNetworkError(error.message)) {
+      // Connectivity flapped mid-request: queue instead of failing the send.
+      await enqueuePendingSend({ localId: message.id, payload });
+      return;
+    }
+
+    if (error) {
+      // Rollback the optimistic insert so the UI can surface the failure honestly.
+      console.error('Remote send failed, rolling back:', error.message);
+      let rolledBack: Message[] = [];
+      setMessages(prev => {
+        rolledBack = prev.filter(m => m.id !== message.id);
+        return rolledBack;
+      });
+      void persistMessages(rolledBack);
+      setRecentActivity(prev => prev.filter(a => a.message.id !== message.id));
+      throw new Error(error.message);
+    }
+
+    markDeliveryState(message.id, 'delivered');
+  }, [enqueuePendingSend, markDeliveryState, persistMessages]);
+
+  // Realtime: keep threads fresh — new rows addressed to me appear instantly.
+  // Re-subscribes on every auth change: at first mount there is no session yet
+  // (ghost/OTP sign-in happens later in onboarding), so a one-shot subscribe
+  // would never connect on fresh installs.
+  useEffect(() => {
+    if (!supabase) return;
+
+    let channel: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
+    let cancelled = false;
+
+    const teardown = () => {
+      if (channel) {
+        void supabase!.removeChannel(channel);
+        channel = null;
+      }
+    };
+
+    const subscribe = (userId: string | undefined) => {
+      teardown();
+      if (!userId || cancelled) return;
+
+      channel = supabase!
+        .channel(`messages-to-${userId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+            filter: `to_user_id=eq.${userId}`,
+          },
+          (payload) => {
+            const row = payload.new as {
+              id: string;
+              to_plate_normalized: string;
+              category: string;
+              body: string;
+              is_anonymous: boolean;
+              high_priority: boolean;
+              created_at: string;
+            };
+            const incoming: Message = {
+              id: row.id,
+              fromPlate: row.is_anonymous ? 'ANONYMOUS' : 'DRIVER',
+              toPlate: row.to_plate_normalized,
+              content: row.body,
+              type: row.category as MessageType,
+              isAnonymous: row.is_anonymous,
+              timestamp: row.created_at,
+              isRead: false,
+              priority: row.high_priority ? 'urgent' : 'medium',
+            };
+            let next: Message[] = [];
+            setMessages(prev => {
+              if (prev.some(m => m.id === incoming.id)) {
+                next = prev;
+                return prev;
+              }
+              next = [...prev, incoming];
+              return next;
+            });
+            void persistMessages(next);
+          },
+        )
+        .subscribe();
+    };
+
+    void supabase.auth.getUser().then(({ data }) => subscribe(data.user?.id));
+    const { data: authSub } = supabase.auth.onAuthStateChange((_event, session) => {
+      subscribe(session?.user?.id);
+    });
+
+    return () => {
+      cancelled = true;
+      authSub.subscription.unsubscribe();
+      teardown();
+    };
+  }, [persistMessages]);
 
   const markMessageAsRead = useCallback(async (messageId: string) => {
     try {
@@ -616,11 +905,14 @@ function useAppStoreLogic() {
     recentActivity,
     userRatings,
     isLoading,
+    hydrated,
     onboardingComplete,
     unreadCount,
     primaryVehicle,
     notificationPrefs,
     saveNotificationPrefs,
+    completeOnboarding,
+    setUserAsAnonymous,
     saveProfile,
     sendMessage,
     markMessageAsRead,

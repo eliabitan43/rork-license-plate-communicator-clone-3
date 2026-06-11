@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "homi",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -26,14 +26,17 @@
         "UIBackgroundModes": [
           "location"
         ]
-      }
+      },
+      "associatedDomains": [
+        "applinks:homi.app"
+      ]
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "app.rork.license-plate-communicator-cz35v3fl-yfuf36id",
+      "package": "app.rork.license_plate_communicator_cz35v3fl_yfuf36id",
       "permissions": [
         "android.permission.VIBRATE",
         "CAMERA",
@@ -47,6 +50,23 @@
         "ACCESS_BACKGROUND_LOCATION",
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.SCHEDULE_EXACT_ALARM"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "homi.app",
+              "pathPrefix": "/m"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
       ]
     },
     "web": {
@@ -93,23 +113,15 @@
           ],
           "enableBackgroundRemoteNotifications": false
         }
-      ]
+      ],
+      "expo-font",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
     },
     "updates": {
-      "enabled": true,
-      "url": "<UNKNOWN>",
-      "requestHeaders": {},
-      "checkAutomatically": "ALWAYS",
-      "fallbackToCacheTimeout": 0,
-      "useEmbeddedUpdate": true,
-      "codeSigningCertificate": "<UNKNOWN>",
-      "codeSigningMetadata": "<UNKNOWN>",
-      "assetPatternsToBeBundled": [],
-      "disableAntiBrickingMeasures": false
-    },
-    "runtimeVersion": "<UNKNOWN>"
+      "enabled": false
+    }
   }
 }
