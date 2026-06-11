@@ -128,7 +128,13 @@ begin
   join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public'
     and c.relkind = 'r'
-    and not c.relrowsecurity;
+    and not c.relrowsecurity
+    -- Extension-owned tables (e.g. postgis spatial_ref_sys) can't take RLS
+    -- and hold no user data.
+    and not exists (
+      select 1 from pg_depend d
+      where d.objid = c.oid and d.deptype = 'e'
+    );
 
   if unprotected is not null then
     raise exception 'RLS disabled on public tables: %', unprotected;
