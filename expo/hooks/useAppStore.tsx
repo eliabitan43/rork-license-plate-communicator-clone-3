@@ -165,6 +165,45 @@ function useAppStoreLogic() {
     };
   }, []);
 
+  const completeOnboarding = useCallback(async () => {
+    await AsyncStorage.setItem(STORAGE_KEYS.ONBOARDING_COMPLETE, JSON.stringify(true));
+    setOnboardingComplete(true);
+  }, []);
+
+  const setUserAsAnonymous = useCallback(async () => {
+    // Ghost mode: create a minimal local anonymous profile. Never clobber an
+    // existing profile (e.g. a registered user re-running onboarding).
+    if (userProfile) return;
+
+    const now = new Date().toISOString();
+    const anonProfile: UserProfile = {
+      id: `anon_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      isAnonymous: true,
+      createdAt: now,
+      allowNotifications: false,
+      rating: 0,
+      reviewCount: 0,
+      communityScore: 0,
+      badges: [],
+      verificationStatus: 'unverified',
+      accountType: 'personal',
+      blockedUsers: [],
+      trustedContacts: [],
+      emergencyContacts: [],
+      preferredLanguage: 'en',
+      vehicles: [],
+      termsAccepted: true,
+      termsAcceptedAt: now,
+      emailVerified: false,
+      phoneVerified: false,
+    };
+
+    // Persist directly instead of via saveProfile() so the onboarding flag is
+    // only flipped by the explicit completeOnboarding() call in the flow.
+    await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(anonProfile));
+    setUserProfile(anonProfile);
+  }, [userProfile]);
+
   const saveProfile = useCallback(async (profile: UserProfile) => {
     try {
       console.log('saveProfile called with:', { 
@@ -621,6 +660,8 @@ function useAppStoreLogic() {
     primaryVehicle,
     notificationPrefs,
     saveNotificationPrefs,
+    completeOnboarding,
+    setUserAsAnonymous,
     saveProfile,
     sendMessage,
     markMessageAsRead,
