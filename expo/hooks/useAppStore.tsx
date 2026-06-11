@@ -6,7 +6,7 @@ import { Platform } from 'react-native';
 import { UserProfile, Message, MessageType, RecentActivity, UserRating, PlateRating, UserBadge, Vehicle, EmergencyContact, NotificationPreferences } from '@/types';
 import { safeJsonParse } from '@/utils/eventsStore';
 import { reputationManager } from '@/utils/reputation';
-import { supabase, isSupabaseConfigured, normalizePlate } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured, normalizePlate, registerDeviceToken } from '@/lib/supabase';
 
 const STORAGE_KEYS = {
   USER_PROFILE: 'user_profile',
@@ -889,6 +889,11 @@ function useAppStoreLogic() {
       const merged: NotificationPreferences = { ...notificationPrefs, ...prefs };
       await AsyncStorage.setItem(STORAGE_KEYS.NOTIFICATION_PREFS, JSON.stringify(merged));
       setNotificationPrefs(merged);
+
+      // Route pushes server-side: keep the devices table in sync with this token.
+      if (merged.enabled && merged.pushToken && merged.platform && merged.platform !== 'unknown') {
+        void registerDeviceToken(merged.pushToken, merged.platform);
+      }
       if (userProfile) {
         const updatedProfile = { ...userProfile, allowNotifications: merged.enabled, notificationPreferences: merged } as UserProfile;
         await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(updatedProfile));

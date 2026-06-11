@@ -35,3 +35,27 @@ export async function getAuthUserId(): Promise<string | null> {
   const { data } = await supabase.auth.getUser();
   return data.user?.id ?? null;
 }
+
+/**
+ * Register (or refresh) this device's Expo push token so the send-message
+ * Edge Function can route pushes. No-op when unconfigured or signed out.
+ */
+export async function registerDeviceToken(
+  expoPushToken: string,
+  platform: 'ios' | 'android' | 'web',
+): Promise<void> {
+  if (!supabase || !expoPushToken) return;
+  const userId = await getAuthUserId();
+  if (!userId) return;
+
+  const { error } = await supabase.from('devices').upsert(
+    {
+      user_id: userId,
+      expo_push_token: expoPushToken,
+      platform,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'expo_push_token' },
+  );
+  if (error) console.warn('Device token registration failed:', error.message);
+}

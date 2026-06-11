@@ -75,6 +75,15 @@ async function sendTwilioSms(to: string, body: string): Promise<void> {
 
 Deno.serve(async (req) => {
   try {
+    // Webhook authentication: the Database Webhook must send
+    // `x-webhook-secret: $WEBHOOK_SECRET` (configured as an HTTP header on the
+    // webhook). Defense in depth on top of platform JWT verification — and the
+    // only auth when the function is deployed with verify_jwt disabled.
+    const expectedSecret = Deno.env.get('WEBHOOK_SECRET');
+    if (expectedSecret && req.headers.get('x-webhook-secret') !== expectedSecret) {
+      return Response.json({ error: 'forbidden' }, { status: 403 });
+    }
+
     const payload = (await req.json()) as WebhookPayload;
     if (payload.type !== 'INSERT' || payload.table !== 'messages') {
       return Response.json({ skipped: true }, { status: 200 });
