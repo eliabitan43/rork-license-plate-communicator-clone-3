@@ -2,9 +2,10 @@ import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Platform } from 'react-native';
-import { UserProfile, Message, RecentActivity, UserRating, PlateRating, UserBadge, Vehicle, EmergencyContact, NotificationPreferences } from '@/types';
+import { UserProfile, Message, MessageType, RecentActivity, UserRating, PlateRating, UserBadge, Vehicle, EmergencyContact, NotificationPreferences } from '@/types';
 import { safeJsonParse } from '@/utils/eventsStore';
 import { reputationManager } from '@/utils/reputation';
+import { supabase, isSupabaseConfigured, normalizePlate } from '@/lib/supabase';
 
 const STORAGE_KEYS = {
   USER_PROFILE: 'user_profile',
@@ -184,9 +185,22 @@ function useAppStoreLogic() {
     // existing profile (e.g. a registered user re-running onboarding).
     if (userProfile) return;
 
+    // Real anonymous session when Supabase is configured; ghost mode must still
+    // work fully offline, so auth failure falls back to a local-only id.
+    let authId: string | null = null;
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.auth.signInAnonymously();
+        if (!error) authId = data.user?.id ?? null;
+        else console.warn('Anonymous sign-in failed, continuing local-only:', error.message);
+      } catch (e) {
+        console.warn('Anonymous sign-in threw, continuing local-only:', e);
+      }
+    }
+
     const now = new Date().toISOString();
     const anonProfile: UserProfile = {
-      id: `anon_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      id: authId ?? `anon_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
       isAnonymous: true,
       createdAt: now,
       allowNotifications: false,
@@ -294,26 +308,146 @@ function useAppStoreLogic() {
     }
   }, []);
 
-  const sendMessage = useCallback(async (message: Message) => {
+  const persistMessages = useCallback(async (next: Message[]) => {
     try {
-      const newMessages = [...messages, message];
-      await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(newMessages));
-      setMessages(newMessages);
-
-      // Add to recent activity
-      const activity: RecentActivity = {
-        id: Date.now().toString(),
-        type: 'sent',
-        message,
-      };
-      const newActivity = [activity, ...recentActivity].slice(0, 50); // Keep last 50
-      await AsyncStorage.setItem(STORAGE_KEYS.RECENT_ACTIVITY, JSON.stringify(newActivity));
-      setRecentActivity(newActivity);
-    } catch (error) {
-      console.error('Error sending message:', error);
-      throw error;
+      await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(next));
+    } catch (e) {
+      console.error('Failed to persist messages', e);
     }
-  }, [messages, recentActivity]);
+  }, []);
+
+  const sendMessage = useCallback(async (message: Message) => {
+    // Optimistic local insert (functional updates — safe under rapid sends).
+    const optimistic: Message = {
+      ...message,
+      deliveryState: isSupabaseConfigured ? 'sending' : (message.deliveryState ?? 'delivered'),
+    };
+
+    let nextMessages: Message[] = [];
+    setMessages(prev => {
+      nextMessages = [...prev, optimistic];
+      return nextMessages;
+    });
+    void persistMessages(nextMessages);
+
+    const activity: RecentActivity = {
+      id: Date.now().toString(),
+      type: 'sent',
+      message: optimistic,
+    };
+    let nextActivity: RecentActivity[] = [];
+    setRecentActivity(prev => {
+      nextActivity = [activity, ...prev].slice(0, 50);
+      return nextActivity;
+    });
+    void AsyncStorage.setItem(STORAGE_KEYS.RECENT_ACTIVITY, JSON.stringify(nextActivity)).catch(() => {});
+
+    if (!supabase) return;
+
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData.user?.id;
+    if (!userId) return; // Local-only session (e.g. ghost before Supabase was configured).
+
+    const { error } = await supabase.from('messages').insert({
+      from_user_id: userId,
+      // to_user_id stays null — resolved server-side by the send-message Edge Function.
+      to_plate_normalized: normalizePlate(message.toPlate),
+      to_country_code: message.toCountry ?? 'IL',
+      category: message.type,
+      action_id: typeof message.metadata?.actionId === 'string' ? message.metadata.actionId : null,
+      body: message.content,
+      is_anonymous: message.isAnonymous,
+      high_priority: message.priority === 'urgent',
+    });
+
+    if (error) {
+      // Rollback the optimistic insert so the UI can surface the failure honestly.
+      console.error('Remote send failed, rolling back:', error.message);
+      let rolledBack: Message[] = [];
+      setMessages(prev => {
+        rolledBack = prev.filter(m => m.id !== message.id);
+        return rolledBack;
+      });
+      void persistMessages(rolledBack);
+      setRecentActivity(prev => prev.filter(a => a.message.id !== message.id));
+      throw new Error(error.message);
+    }
+
+    let confirmed: Message[] = [];
+    setMessages(prev => {
+      confirmed = prev.map(m =>
+        m.id === message.id ? { ...m, deliveryState: 'delivered' as const } : m,
+      );
+      return confirmed;
+    });
+    void persistMessages(confirmed);
+  }, [persistMessages]);
+
+  // Realtime: keep threads fresh — new rows addressed to me appear instantly.
+  useEffect(() => {
+    if (!supabase) return;
+
+    let channel: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
+    let cancelled = false;
+
+    const subscribe = async () => {
+      const { data } = await supabase!.auth.getUser();
+      const userId = data.user?.id;
+      if (!userId || cancelled) return;
+
+      channel = supabase!
+        .channel(`messages-to-${userId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+            filter: `to_user_id=eq.${userId}`,
+          },
+          (payload) => {
+            const row = payload.new as {
+              id: string;
+              to_plate_normalized: string;
+              category: string;
+              body: string;
+              is_anonymous: boolean;
+              high_priority: boolean;
+              created_at: string;
+            };
+            const incoming: Message = {
+              id: row.id,
+              fromPlate: row.is_anonymous ? 'ANONYMOUS' : 'DRIVER',
+              toPlate: row.to_plate_normalized,
+              content: row.body,
+              type: row.category as MessageType,
+              isAnonymous: row.is_anonymous,
+              timestamp: row.created_at,
+              isRead: false,
+              priority: row.high_priority ? 'urgent' : 'medium',
+            };
+            let next: Message[] = [];
+            setMessages(prev => {
+              if (prev.some(m => m.id === incoming.id)) {
+                next = prev;
+                return prev;
+              }
+              next = [...prev, incoming];
+              return next;
+            });
+            void persistMessages(next);
+          },
+        )
+        .subscribe();
+    };
+
+    void subscribe();
+
+    return () => {
+      cancelled = true;
+      if (channel) void supabase!.removeChannel(channel);
+    };
+  }, [persistMessages]);
 
   const markMessageAsRead = useCallback(async (messageId: string) => {
     try {

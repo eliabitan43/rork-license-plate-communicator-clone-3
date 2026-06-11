@@ -18,6 +18,7 @@ import { Ghost, Phone, ChevronLeft, Apple } from 'lucide-react-native';
 import { designTokens, getShadowStyle } from '@/constants/theme';
 import { HomiLogo } from '@/components/HomiLogo';
 import { useAppStore } from '@/hooks/useAppStore';
+import { supabase } from '@/lib/supabase';
 import { UserProfile } from '@/types';
 
 type OnboardingStep = 'welcome' | 'phone' | 'otp';
@@ -39,24 +40,53 @@ function toE164(digits: string): string {
   return `${IL_DIAL_CODE}${local}`;
 }
 
-// TODO(supabase): Phase 3 replaces the bodies of requestOtpCode/verifyOtpCode with
-// supabase.auth.signInWithOtp({ phone }) / supabase.auth.verifyOtp({ phone, token, type: 'sms' }).
-// DECISION: in this phase the OTP flow is a local stub (any 6-digit code verifies) so the
-// 3-path UX ships and is testable end-to-end before SMS infrastructure exists.
-async function requestOtpCode(_phoneE164: string): Promise<{ ok: boolean; error?: string }> {
-  await new Promise((r) => setTimeout(r, 600));
-  return { ok: true };
+type OtpFlow = 'sms' | 'phone_change' | 'stub';
+
+// DECISION: when Supabase isn't configured (pre-provisioning builds) the OTP flow
+// degrades to a local stub (any 6-digit code verifies) so onboarding stays testable.
+async function requestOtpCode(
+  phoneE164: string,
+): Promise<{ ok: boolean; error?: string; flow: OtpFlow }> {
+  if (!supabase) {
+    await new Promise((r) => setTimeout(r, 600));
+    return { ok: true, flow: 'stub' };
+  }
+
+  // Anonymous → registered upgrade is identity linking on the SAME auth row:
+  // updateUser({ phone }) sends the code and a later verifyOtp(type: 'phone_change')
+  // flips is_anonymous while preserving message history and referral attribution.
+  const { data } = await supabase.auth.getUser();
+  if (data.user?.is_anonymous) {
+    const { error } = await supabase.auth.updateUser({ phone: phoneE164 });
+    if (error) return { ok: false, error: error.message, flow: 'phone_change' };
+    return { ok: true, flow: 'phone_change' };
+  }
+
+  const { error } = await supabase.auth.signInWithOtp({ phone: phoneE164 });
+  if (error) return { ok: false, error: error.message, flow: 'sms' };
+  return { ok: true, flow: 'sms' };
 }
 
 async function verifyOtpCode(
-  _phoneE164: string,
+  phoneE164: string,
   code: string,
-): Promise<{ ok: boolean; error?: string }> {
-  await new Promise((r) => setTimeout(r, 600));
+  flow: OtpFlow,
+): Promise<{ ok: boolean; error?: string; userId?: string }> {
   if (code.length !== OTP_LENGTH) {
     return { ok: false, error: 'Enter the 6-digit code.' };
   }
-  return { ok: true };
+  if (!supabase || flow === 'stub') {
+    await new Promise((r) => setTimeout(r, 600));
+    return { ok: true };
+  }
+
+  const { data, error } = await supabase.auth.verifyOtp({
+    phone: phoneE164,
+    token: code,
+    type: flow === 'phone_change' ? 'phone_change' : 'sms',
+  });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, userId: data.user?.id };
 }
 
 export default function OnboardingScreen() {
@@ -64,6 +94,7 @@ export default function OnboardingScreen() {
   const [step, setStep] = useState<OnboardingStep>('welcome');
   const [phoneDigits, setPhoneDigits] = useState('');
   const [otp, setOtp] = useState('');
+  const [otpFlow, setOtpFlow] = useState<OtpFlow>('stub');
   const [busy, setBusy] = useState<'ghost' | 'phone' | 'otp' | null>(null);
   const otpInputRef = useRef<TextInput>(null);
 
@@ -118,6 +149,7 @@ export default function OnboardingScreen() {
         Alert.alert('Could not send code', res.error ?? 'Please try again.');
         return;
       }
+      setOtpFlow(res.flow);
       setOtp('');
       setStep('otp');
       setTimeout(() => otpInputRef.current?.focus(), 350);
@@ -130,7 +162,7 @@ export default function OnboardingScreen() {
     if (busy) return;
     setBusy('otp');
     try {
-      const res = await verifyOtpCode(phoneE164, otp);
+      const res = await verifyOtpCode(phoneE164, otp, otpFlow);
       if (!res.ok) {
         if (Platform.OS !== 'web') {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -144,27 +176,31 @@ export default function OnboardingScreen() {
       }
 
       const now = new Date().toISOString();
+      // Identity linking: an upgrading ghost user keeps their existing local
+      // profile (vehicles, badges, history) — only identity fields change.
+      const existing = appStore?.userProfile ?? null;
       const profile: UserProfile = {
-        id: `usr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-        phone: phoneE164,
-        isAnonymous: false,
         createdAt: now,
         allowNotifications: false,
         rating: 0,
         reviewCount: 0,
         communityScore: 0,
         badges: [],
-        verificationStatus: 'verified',
         accountType: 'personal',
         blockedUsers: [],
         trustedContacts: [],
         emergencyContacts: [],
         preferredLanguage: 'en',
         vehicles: [],
-        termsAccepted: true,
-        termsAcceptedAt: now,
         emailVerified: false,
+        ...(existing ?? {}),
+        id: res.userId ?? existing?.id ?? `usr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        phone: phoneE164,
+        isAnonymous: false,
         phoneVerified: true,
+        verificationStatus: 'verified',
+        termsAccepted: true,
+        termsAcceptedAt: existing?.termsAcceptedAt ?? now,
       };
       // saveProfile persists the profile and marks onboarding complete.
       await appStore?.saveProfile?.(profile);
@@ -177,12 +213,16 @@ export default function OnboardingScreen() {
     }
   }, [appStore, busy, otp, phoneE164]);
 
-  const handleResend = useCallback(() => {
+  const handleResend = useCallback(async () => {
     if (Platform.OS !== 'web') {
       void Haptics.selectionAsync();
     }
-    void requestOtpCode(phoneE164);
-    Alert.alert('Code sent', `We sent a new code to ${phoneE164}.`);
+    const res = await requestOtpCode(phoneE164);
+    if (res.ok) setOtpFlow(res.flow);
+    Alert.alert(
+      res.ok ? 'Code sent' : 'Could not resend',
+      res.ok ? `We sent a new code to ${phoneE164}.` : (res.error ?? 'Please try again.'),
+    );
   }, [phoneE164]);
 
   const goBack = useCallback(() => {
