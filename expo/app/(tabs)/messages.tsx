@@ -1,6 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  FlatList,
   Platform,
   Pressable,
   StyleSheet,
@@ -10,6 +9,7 @@ import {
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { LinearTransition } from 'react-native-reanimated';
 import {
   Check,
   CheckCheck,
@@ -18,6 +18,9 @@ import {
   SmartphoneNfc,
 } from 'lucide-react-native';
 import { designTokens } from '@/constants/theme';
+import { enterUp, springs, usePulse } from '@/lib/motion';
+import { PressableScale } from '@/components/PressableScale';
+import { SkeletonCard } from '@/components/Skeleton';
 import { useAppStore } from '@/hooks/useAppStore';
 import { Message } from '@/types';
 
@@ -68,20 +71,24 @@ interface MessageRowProps {
   onPress: (message: Message) => void;
 }
 
+function UnreadDot() {
+  const { animatedStyle } = usePulse(true);
+  return <Animated.View style={[styles.unreadDot, animatedStyle]} />;
+}
+
 function MessageRow({ message, isReceived, onPress }: MessageRowProps) {
   const unread = isReceived && !message.isRead;
   return (
-    <Pressable
+    <PressableScale
       onPress={() => onPress(message)}
       accessibilityRole="button"
       accessibilityLabel={`${isReceived ? 'Received' : 'Sent'} message ${
         unread ? ', unread' : ''
       }: ${message.content}`}
-      style={({ pressed }) => [
+      style={[
         styles.row,
         isReceived && styles.rowMine,
         unread && styles.rowUnread,
-        pressed && styles.pressed,
       ]}
       testID={`message-row-${message.id}`}
     >
@@ -99,13 +106,13 @@ function MessageRow({ message, isReceived, onPress }: MessageRowProps) {
         <View style={styles.rowMeta}>
           {!isReceived && <DeliveryIcon message={message} />}
           <Text style={styles.rowTime}>{formatRelativeTime(message.timestamp)}</Text>
-          {unread && <View style={styles.unreadDot} />}
+          {unread && <UnreadDot />}
         </View>
       </View>
       <Text style={[styles.rowContent, unread && styles.rowContentUnread]} numberOfLines={2}>
         {message.content}
       </Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -201,13 +208,26 @@ export default function MessagesScreen() {
         })}
       </View>
 
-      <FlatList
+      {!appStore?.hydrated ? (
+        <View style={styles.list} testID="messages-skeleton">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </View>
+      ) : (
+      <Animated.FlatList
         data={filtered}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item: Message) => item.id}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
-        renderItem={({ item }) => (
-          <MessageRow message={item} isReceived={isReceived(item)} onPress={handleOpen} />
+        itemLayoutAnimation={LinearTransition.springify()
+          .damping(springs.gentle.damping)
+          .stiffness(springs.gentle.stiffness)}
+        renderItem={({ item, index }: { item: Message; index: number }) => (
+          <Animated.View entering={enterUp(Math.min(index, 8) * 40)}>
+            <MessageRow message={item} isReceived={isReceived(item)} onPress={handleOpen} />
+          </Animated.View>
         )}
         ListEmptyComponent={
           <View style={styles.empty} testID="messages-empty">
@@ -223,6 +243,7 @@ export default function MessagesScreen() {
           </View>
         }
       />
+      )}
     </SafeAreaView>
   );
 }
