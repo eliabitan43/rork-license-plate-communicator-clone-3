@@ -19,6 +19,7 @@ import { trpc, trpcClient } from "@/lib/trpc";
 import { ToastProvider, ToastContainer } from "@/hooks/useToast";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { OfflineBanner } from "@/components/OfflineBanner";
+import { ensureNotificationChannels } from "@/utils/notifications";
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -281,6 +282,11 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
   const [isStorageReady, setIsStorageReady] = useState(false);
+
+  // Android channels must exist before the first push arrives.
+  useEffect(() => {
+    void ensureNotificationChannels();
+  }, []);
   const [storageError, setStorageError] = useState<string | null>(null);
 
   useEffect(() => {

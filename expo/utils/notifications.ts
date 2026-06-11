@@ -71,3 +71,29 @@ if (Platform.OS !== 'web') {
     }),
   });
 }
+
+/**
+ * Android notification channels. Must match the channelIds used by the
+ * send-message / push Edge Functions: 'critical-alerts' (MAX — tow, child/pet,
+ * fire) and 'messages' (HIGH — everything else). Call once at app start.
+ */
+export async function ensureNotificationChannels(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  try {
+    await Notifications.setNotificationChannelAsync('critical-alerts', {
+      name: 'Critical alerts',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      sound: 'default',
+      bypassDnd: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    });
+    await Notifications.setNotificationChannelAsync('messages', {
+      name: 'Messages',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'default',
+    });
+  } catch (e) {
+    console.warn('Failed to set notification channels', e);
+  }
+}
